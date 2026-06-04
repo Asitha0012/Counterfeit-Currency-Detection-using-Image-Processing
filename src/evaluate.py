@@ -81,11 +81,15 @@ def verify_bleed_lines(img, side, denom):
             
     if num_of_cols != 0:
         avg_count = sum(result) / num_of_cols
+        # Visual line count: use the mode (most frequent count) for display
+        from collections import Counter
+        visual_count = Counter(result).most_common(1)[0][0]
     else:
         avg_count = -1
+        visual_count = 0
         
     status = (avg_count >= expected_range[0] and avg_count <= expected_range[1])
-    return status, avg_count
+    return status, avg_count, visual_count
 
 def verify_number_panel(img, denom):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -158,19 +162,21 @@ def verify_color_profile(img, denom):
             thread_passed = (valley_depth >= 14.0)
             base_color_passed = True
         else:
+            # Check 1: Base color — genuine 500 notes have a specific grey-brown tone
             center_crop = img[100:400, 200:900]
             hsv = cv2.cvtColor(center_crop, cv2.COLOR_BGR2HSV)
-            lower_gray = np.array([10, 2, 40])
-            upper_gray = np.array([70, 70, 240])
+            lower_gray = np.array([8, 2, 40])
+            upper_gray = np.array([75, 75, 245])
             mask = cv2.inRange(hsv, lower_gray, upper_gray)
             ratio = np.sum(mask > 0) / mask.size
-            base_color_passed = ratio > 0.4
+            base_color_passed = ratio > 0.35
             
-            thread_crop = img[100:400, 580:610]
-            g_b_mask = (thread_crop[:, :, 1].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8) | \
-                       (thread_crop[:, :, 0].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8)
+            # Check 2: Thread color shift — genuine thread has green/blue shift
+            thread_crop = img[100:400, 575:615]
+            g_b_mask = (thread_crop[:, :, 1].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 6) | \
+                       (thread_crop[:, :, 0].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 6)
             thread_ratio = np.sum(g_b_mask) / g_b_mask.size
-            thread_passed = thread_ratio > 0.005
+            thread_passed = thread_ratio > 0.008
             
         return base_color_passed and thread_passed
     else:
@@ -179,22 +185,29 @@ def verify_color_profile(img, denom):
             crop = cv2.cvtColor(img[100:350, 560:630], cv2.COLOR_BGR2GRAY)
             col_means = np.mean(crop, axis=0)
             valley_depth = np.mean(col_means) - np.min(col_means)
-            thread_passed = (valley_depth >= 14.0)
+            thread_passed = (valley_depth >= 10.0)
             base_color_passed = True
         else:
             center_crop = img[100:350, 200:900]
             hsv = cv2.cvtColor(center_crop, cv2.COLOR_BGR2HSV)
-            lower_pink = np.array([130, 20, 40])
-            upper_pink = np.array([178, 255, 255])
+            lower_pink = np.array([120, 10, 30])
+            upper_pink = np.array([180, 255, 255])
             mask = cv2.inRange(hsv, lower_pink, upper_pink)
             ratio = np.sum(mask > 0) / mask.size
-            base_color_passed = ratio > 0.1
+            base_color_passed = ratio > 0.08
             
-            thread_crop = img[100:350, 580:610]
-            g_b_mask = (thread_crop[:, :, 1].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8) | \
-                       (thread_crop[:, :, 0].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8)
+            # Widen crop coordinates to handle note alignment variation
+            thread_crop = img[100:350, 560:630]
+            g_b_mask = (thread_crop[:, :, 1].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 3) | \
+                       (thread_crop[:, :, 0].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 3)
             thread_ratio = np.sum(g_b_mask) / g_b_mask.size
-            thread_passed = thread_ratio > 0.005
+            
+            # Grayscale fallback check for physical thread presence
+            gray_crop = cv2.cvtColor(thread_crop, cv2.COLOR_BGR2GRAY)
+            col_means = np.mean(gray_crop, axis=0)
+            valley_depth = np.mean(col_means) - np.min(col_means)
+            
+            thread_passed = (thread_ratio > 0.002) or (valley_depth >= 10.0)
             
         return base_color_passed and thread_passed
 
@@ -204,7 +217,10 @@ def verify_watermark(img, denom):
     std_dev = np.std(gray)
     edges = cv2.Canny(gray, 30, 100)
     edge_density = np.sum(edges > 0) / edges.size
-    return (std_dev >= 8.0) and (std_dev <= 60.0) and (edge_density > 0.005) and (edge_density < 0.15)
+    if denom == '500':
+        return (std_dev >= 8.0) and (std_dev <= 60.0) and (edge_density > 0.005) and (edge_density < 0.15)
+    else:
+        return (std_dev >= 1.5) and (std_dev <= 70.0) and (edge_density >= 0.0001) and (edge_density < 0.20)
 
 def analyze_note(image_path, denom, return_images=False):
     img = cv2.imread(image_path)
@@ -235,29 +251,35 @@ def analyze_note(image_path, denom, return_images=False):
     # 2. Features 1 to 7 (ORB + SSIM template matching)
     search_areas = {
         '500': [
-            [200,300,200,370], [1050,1500,300,450], [100,450,20,120],
-            [690,1050,20,120], [820,1050,350,430], [700,810,330,430], [400,650,0,100]
+            [170,330,180,390], [1050,1500,300,450], [100,450,20,120],
+            [690,1050,20,120], [820,1050,350,430], [670,840,310,450], [400,650,0,100]
         ],
         '2000': [
-            [200,270,160,330], [1050,1500,250,400], [50,400,0,100],
-            [750,1050,0,100], [850,1050,280,380], [700,820,290,370], [400,650,0,100]
+            [170,300,140,350], [1000,1165,200,420], [50,400,0,100],
+            [750,1050,0,100], [850,1050,280,380], [670,840,270,390], [400,650,0,100]
         ]
     }
     
     feature_limits = {
         '500': [
-            [12000,17000], [10000,18000], [20000,30000],
-            [24000,36000], [15000,25000], [7000,13000], [11000,18000]
+            [9000,20000], [10000,18000], [20000,30000],
+            [24000,36000], [15000,25000], [5000,16000], [11000,18000]
         ],
         '2000': [
-            [10000,14000], [9000,15000], [17000,21500],
-            [19000,28000], [17500,23000], [6500,9000], [10000,16000]
+            [8000,18000], [6000,20000], [17000,21500],
+            [19000,28000], [17500,23000], [5000,15000], [10000,16000]
         ]
     }
     
     min_ssim_scores = {
-        '500': [0.4, 0.4, 0.5, 0.4, 0.5, 0.45, 0.5],
-        '2000': [0.45, 0.4, 0.45, 0.45, 0.5, 0.4, 0.5]
+        '500': [0.35, 0.4, 0.5, 0.4, 0.5, 0.35, 0.5],
+        '2000': [0.40, 0.35, 0.45, 0.45, 0.5, 0.35, 0.5]
+    }
+    
+    # Features 1 and 6 use more templates (12) for improved robustness
+    templates_per_feature = {
+        '500': [12, 6, 6, 6, 6, 12, 6],
+        '2000': [12, 12, 6, 6, 6, 12, 6]
     }
     
     for j in range(7):
@@ -275,8 +297,9 @@ def analyze_note(image_path, denom, return_images=False):
         max_score_img = None
         score_set = []
         
-        # Evaluate up to 6 templates for performance
-        for t_file in templates[:6]:
+        # Use more templates for critical features (F1, F6) for better accuracy
+        n_templates = templates_per_feature[denom][j]
+        for t_file in templates[:n_templates]:
             t_path = os.path.join(feature_dir, t_file)
             t_img = cv2.imread(t_path)
             if t_img is None:
@@ -309,18 +332,22 @@ def analyze_note(image_path, denom, return_images=False):
             feature_statuses[j] = True
         
         if return_images:
-            disp_img = max_score_img if max_score_img is not None else np.zeros((100, 100, 3), dtype=np.uint8)
+            if max_score_img is not None:
+                disp_img = max_score_img
+            else:
+                xmin, xmax, ymin, ymax = search_area
+                disp_img = img[ymin:ymax, xmin:xmax].copy()
             result_list.append([disp_img, avg_score, max_score, feature_statuses[j]])
             
     # 8. Left bleed lines
-    lbl_passed, lbl_count = verify_bleed_lines(img, 'left', denom)
+    lbl_passed, lbl_avg, lbl_count = verify_bleed_lines(img, 'left', denom)
     feature_statuses[7] = lbl_passed
     if return_images:
         crop_lbl = img[120:240, 12:35] if denom == '500' else img[80:230, 10:30]
         result_list.append([crop_lbl, lbl_count, lbl_passed])
         
     # 9. Right bleed lines
-    rbl_passed, rbl_count = verify_bleed_lines(img, 'right', denom)
+    rbl_passed, rbl_avg, rbl_count = verify_bleed_lines(img, 'right', denom)
     feature_statuses[8] = rbl_passed
     if return_images:
         crop_rbl = img[120:260, 1135:1155] if denom == '500' else img[90:230, 1140:1160]
@@ -348,12 +375,42 @@ def analyze_note(image_path, denom, return_images=False):
         result_list.append([crop_wm, watermark_passed])
         
     passed_features = sum(feature_statuses)
+
+    # --- Baseline Verdict: Simple Flat Voting (kept for comparison) ---
     flat_verdict = (passed_features >= 10)
-    veto_verdict = flat_verdict and feature_statuses[10]
-    
+
+    # Stage 1: Mandatory Gate - ALL critical physical security features must pass.
+    # F5 (Ashok Pillar Emblem) → index 4
+    # F6 (RBI Seal / Visual Marker) → index 5
+    # F8 (Left Bleed Lines)  → index 7
+    # F9 (Right Bleed Lines) → index 8
+    # F11 (Security Thread & Color Profile) → index 10
+    # F12 (Watermark) → index 11
+    # If ANY critical feature fails → immediately COUNTERFEIT, no further checking.
+    critical_features_pass = (
+        feature_statuses[4]  and   # F5:  Ashok Pillar Emblem
+        feature_statuses[5]  and   # F6:  SSIM Template 6 (critical visual marker)
+        feature_statuses[7]  and   # F8:  Left Bleed Lines
+        feature_statuses[8]  and   # F9:  Right Bleed Lines
+        feature_statuses[10] and   # F11: Security Thread & Color
+        feature_statuses[11]       # F12: Watermark
+    )
+
+    # Stage 2: Weighted Voting on remaining features (only runs if Stage 1 passes).
+    # F1,F2,F3,F4,F7 (SSIM Template Matching): 1.0 point each → max 5 pts
+    # F10 (Number Panel Character Count): 2.0 points               → max 2 pts
+    # Total max = 7 pts. A genuine note must score >= 6.0 pts.
+    if critical_features_pass:
+        stage2_features = [0, 1, 2, 3, 6]  # F1,F2,F3,F4,F7 (F5 and F6 are now in Stage 1)
+        weighted_score = sum(feature_statuses[i] * 1.0 for i in stage2_features)
+        weighted_score += feature_statuses[9] * 2.0                  # F10
+        hybrid_verdict = (weighted_score >= 6.0)
+    else:
+        hybrid_verdict = False
+
     if return_images:
-        return flat_verdict, veto_verdict, passed_features, feature_statuses, result_list
-    return flat_verdict, veto_verdict, passed_features, feature_statuses
+        return flat_verdict, hybrid_verdict, passed_features, feature_statuses, result_list
+    return flat_verdict, hybrid_verdict, passed_features, feature_statuses
 
 def report_accuracy_with_confidence(correct, total, confidence=0.95):
     """Wilson Score Interval implementation for accurate confidence reporting on small sample sizes."""

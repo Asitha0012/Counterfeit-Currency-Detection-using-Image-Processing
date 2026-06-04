@@ -6,6 +6,8 @@ import cv2
 import time
 import os
 import sys
+import numpy as np
+
 
 # Ensure the src directory is in the path so we can import evaluate
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -205,8 +207,8 @@ class CurrencyDetectorApp:
                         avg_score = f"{result_list[feature_num][1]:.3f}"
                         text2 = f"Avg. SSIM Score: {avg_score}"
                     elif feature_num < 9:
-                        line_count = f"{result_list[feature_num][1]:.3f}"
-                        text2 = f"Avg. Number of lines: {line_count}"
+                        line_count = int(result_list[feature_num][1])
+                        text2 = f"Lines detected: {line_count}"
                     elif feature_num == 9:
                         text2 = "9 characters detected!" if result_list[feature_num][1] else "Less than 9 characters detected!"
                     elif feature_num == 10:
@@ -240,11 +242,11 @@ class CurrencyDetectorApp:
         flat_fg = "green" if is_flat_genuine else "red"
         Label(master=verdict_frame, text=f"Baseline Verdict (Flat Voting): {flat_txt}", fg=flat_fg, font="Verdana 14 bold").grid(row=1, column=1, padx=20)
         
-        veto_txt = "GENUINE" if is_veto_genuine else "COUNTERFEIT"
-        veto_fg = "green" if is_veto_genuine else "red"
-        Label(master=verdict_frame, text=f"Robust Verdict (Veto-Based): {veto_txt}", fg=veto_fg, font="Verdana 14 bold").grid(row=1, column=2, padx=20)
+        hybrid_txt = "GENUINE" if is_veto_genuine else "COUNTERFEIT"
+        hybrid_fg = "green" if is_veto_genuine else "red"
+        Label(master=verdict_frame, text=f"Robust Verdict (Two-Stage Hybrid): {hybrid_txt}", fg=hybrid_fg, font="Verdana 14 bold").grid(row=1, column=2, padx=20)
         
-        Label(master=sub_frame3, text="Note: Veto-Based classification requires Feature 11 (Security Thread/Color) to pass regardless of other features.", fg='gray', font="Verdana 10 italic", pady=5).pack()
+        Label(master=sub_frame3, text="Note: Two-Stage Hybrid requires F5, F6, F8, F9, F11 & F12 (physical security features) to ALL pass, then weighted voting on F1-F4, F7 & F10.", fg='gray', font="Verdana 10 italic", pady=5).pack()
         Label(master=sub_frame3, text=f"Processing Speed: {elapsed_time_ms:.1f} ms", fg='black', font="Verdana 11 bold").pack()
 
 
