@@ -1,0 +1,20 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE configs and extensions
+.qodo/
+.vscode/
+.idea/
+
+# OS-generated files
+Thumbs.db
+desktop.ini
+
+# Project Documentation
+docs/
+
