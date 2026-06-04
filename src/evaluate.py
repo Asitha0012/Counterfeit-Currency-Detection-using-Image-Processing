@@ -206,10 +206,12 @@ def verify_watermark(img, denom):
     edge_density = np.sum(edges > 0) / edges.size
     return (std_dev >= 8.0) and (std_dev <= 60.0) and (edge_density > 0.005) and (edge_density < 0.15)
 
-def analyze_note(image_path, denom):
+def analyze_note(image_path, denom, return_images=False):
     img = cv2.imread(image_path)
     if img is None:
-        return False, 0, [False]*12
+        if return_images:
+            return False, 0, [False]*12, []
+        return False, False, 0, [False]*12
         
     # Preprocessing
     if denom == '500':
@@ -225,10 +227,10 @@ def analyze_note(image_path, denom):
     gray_img = clahe.apply(gray_img)
     
     feature_statuses = [False] * 12
+    result_list = []
     
     # 1. Quality validation
     quality_passed = check_image_quality(img)
-    # Note: Quality check is an execution safeguard, features 1-12 form classification checks.
     
     # 2. Features 1 to 7 (ORB + SSIM template matching)
     search_areas = {
@@ -270,6 +272,7 @@ def analyze_note(image_path, denom):
         templates = sorted([f for f in os.listdir(feature_dir) if f.endswith('.jpg')])
         
         max_score = -1
+        max_score_img = None
         score_set = []
         
         # Evaluate up to 6 templates for performance
@@ -280,7 +283,7 @@ def analyze_note(image_path, denom):
                 continue
             t_blur = cv2.GaussianBlur(t_img, (5, 5), 0)
             t_gray = cv2.cvtColor(t_blur, cv2.COLOR_BGR2GRAY)
-            t_gray = clahe.apply(t_gray) # Apply CLAHE to template gray too
+            t_gray = clahe.apply(t_gray)
             
             dst, dst_pts = compute_orb(t_gray, mask_test)
             if dst is None:
@@ -298,37 +301,58 @@ def analyze_note(image_path, denom):
             score_set.append(score)
             if score > max_score:
                 max_score = score
+                max_score_img = crop_img.copy()
                 
         avg_score = sum(score_set) / len(score_set) if score_set else 0
         min_allowed = min_ssim_scores[denom][j]
         if avg_score >= min_allowed or max_score >= 0.79:
             feature_statuses[j] = True
+        
+        if return_images:
+            disp_img = max_score_img if max_score_img is not None else np.zeros((100, 100, 3), dtype=np.uint8)
+            result_list.append([disp_img, avg_score, max_score, feature_statuses[j]])
             
     # 8. Left bleed lines
-    lbl_passed, _ = verify_bleed_lines(img, 'left', denom)
+    lbl_passed, lbl_count = verify_bleed_lines(img, 'left', denom)
     feature_statuses[7] = lbl_passed
+    if return_images:
+        crop_lbl = img[120:240, 12:35] if denom == '500' else img[80:230, 10:30]
+        result_list.append([crop_lbl, lbl_count, lbl_passed])
         
     # 9. Right bleed lines
-    rbl_passed, _ = verify_bleed_lines(img, 'right', denom)
+    rbl_passed, rbl_count = verify_bleed_lines(img, 'right', denom)
     feature_statuses[8] = rbl_passed
+    if return_images:
+        crop_rbl = img[120:260, 1135:1155] if denom == '500' else img[90:230, 1140:1160]
+        result_list.append([crop_rbl, rbl_count, rbl_passed])
         
     # 10. Number panel character count
     np_passed = verify_number_panel(img, denom)
     feature_statuses[9] = np_passed
+    if return_images:
+        crop_np = img[410:500, 700:1080] if denom == '500' else img[360:440, 760:1080]
+        result_list.append([crop_np, np_passed])
         
     # 11. Color profile check
     color_passed = verify_color_profile(img, denom)
     feature_statuses[10] = color_passed
+    if return_images:
+        crop_color = img[100:400, 200:900] if denom == '500' else img[100:350, 200:900]
+        result_list.append([crop_color, color_passed])
         
     # 12. Watermark check
     watermark_passed = verify_watermark(img, denom)
     feature_statuses[11] = watermark_passed
+    if return_images:
+        crop_wm = img[150:350, 880:1080] if denom == '500' else img[120:300, 850:1050]
+        result_list.append([crop_wm, watermark_passed])
         
     passed_features = sum(feature_statuses)
-    # Classification Verdict: A banknote is Genuine if it passes at least 10 features
     flat_verdict = (passed_features >= 10)
-    # Veto-based Verdict: Also requires Feature 11 (Color & Thread Check, index 10) to pass
     veto_verdict = flat_verdict and feature_statuses[10]
+    
+    if return_images:
+        return flat_verdict, veto_verdict, passed_features, feature_statuses, result_list
     return flat_verdict, veto_verdict, passed_features, feature_statuses
 
 def report_accuracy_with_confidence(correct, total, confidence=0.95):
