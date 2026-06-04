@@ -1,6 +1,6 @@
 # Counterfeit Currency Detection using Image Processing
 
-This repository contains a modular, notebook-driven counterfeit currency detection system designed to inspect visual, geometric, and chromatic security features on Indian Rupee banknotes (Rs. 500 and Rs. 2000). The workflow is orchestrated by a central controller that executes a starter GUI, routes to the denomination-specific analysis pipeline, and renders a comprehensive validation report GUI.
+This repository contains a modular, notebook-driven counterfeit currency detection system designed to inspect 12 distinct visual, geometric, and chromatic security features on Indian Rupee banknotes (Rs. 500 and Rs. 2000). The workflow is orchestrated by a central controller that executes a starter GUI, routes to the denomination-specific analysis pipeline, and renders a comprehensive validation report GUI.
 
 For a detailed walkthrough of the design, state variables, and algorithmic thresholds, refer to the [Study Guide](docs/study-guide.md) and the [Technical Documentation](docs/project-documentation.md).
 

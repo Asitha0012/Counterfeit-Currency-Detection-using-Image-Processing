@@ -96,7 +96,12 @@ def verify_number_panel(img, denom):
         
     h_img, w_img = crop.shape[:2]
     
-    for thresh_value in range(90, 155, 5):
+    if denom == '500':
+        start_thresh = 95
+    else:
+        start_thresh = 90
+        
+    for thresh_value in range(start_thresh, 155, 5):
         _, thresh = cv2.threshold(crop, thresh_value, 255, cv2.THRESH_BINARY)
         img_masked = cv2.bitwise_and(crop, crop, mask=thresh)
         contours, _ = cv2.findContours(img_masked, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
@@ -155,37 +160,17 @@ def verify_color_profile(img, denom):
         else:
             center_crop = img[100:400, 200:900]
             hsv = cv2.cvtColor(center_crop, cv2.COLOR_BGR2HSV)
-            gray = cv2.cvtColor(center_crop, cv2.COLOR_BGR2GRAY)
-            mask = (gray > 15) & (gray < 252)
-            if np.sum(mask) == 0:
-                return False
-                
-            h_vals = hsv[:, :, 0][mask]
-            s_vals = hsv[:, :, 1][mask]
+            lower_gray = np.array([10, 2, 40])
+            upper_gray = np.array([70, 70, 240])
+            mask = cv2.inRange(hsv, lower_gray, upper_gray)
+            ratio = np.sum(mask > 0) / mask.size
+            base_color_passed = ratio > 0.4
             
-            h_rad = (h_vals.astype(np.float32) * 2.0) * (np.pi / 180.0)
-            avg_x = np.mean(np.cos(h_rad))
-            avg_y = np.mean(np.sin(h_rad))
-            avg_hue_deg = np.arctan2(avg_y, avg_x) * (180.0 / np.pi)
-            if avg_hue_deg < 0:
-                avg_hue_deg += 360.0
-            avg_hue_opencv = avg_hue_deg / 2.0
-            avg_sat = np.mean(s_vals)
-            
-            # Base color range for 500 (stone grey/greenish-yellow)
-            base_color_passed = (20.0 <= avg_hue_opencv <= 75.0) and (5.0 <= avg_sat <= 50.0)
-            
-            # Thread check: search narrow coordinate band for green shift pixels
-            thread_crop = img[100:400, 560:630]
-            max_ratio = 0.0
-            for col in range(thread_crop.shape[1] - 15):
-                strip = thread_crop[:, col:col+15]
-                gray_strip = cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY)
-                shift_mask = (strip[:, :, 1].astype(np.int16) > strip[:, :, 2].astype(np.int16) + 3) & (gray_strip < 210)
-                ratio = np.sum(shift_mask) / shift_mask.size
-                if ratio > max_ratio:
-                    max_ratio = ratio
-            thread_passed = (max_ratio > 0.01)
+            thread_crop = img[100:400, 580:610]
+            g_b_mask = (thread_crop[:, :, 1].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8) | \
+                       (thread_crop[:, :, 0].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8)
+            thread_ratio = np.sum(g_b_mask) / g_b_mask.size
+            thread_passed = thread_ratio > 0.005
             
         return base_color_passed and thread_passed
     else:
@@ -199,31 +184,17 @@ def verify_color_profile(img, denom):
         else:
             center_crop = img[100:350, 200:900]
             hsv = cv2.cvtColor(center_crop, cv2.COLOR_BGR2HSV)
-            gray = cv2.cvtColor(center_crop, cv2.COLOR_BGR2GRAY)
-            mask = (gray > 15) & (gray < 252)
-            if np.sum(mask) == 0:
-                return False
-                
-            h_vals = hsv[:, :, 0][mask]
-            s_vals = hsv[:, :, 1][mask]
+            lower_pink = np.array([130, 20, 40])
+            upper_pink = np.array([178, 255, 255])
+            mask = cv2.inRange(hsv, lower_pink, upper_pink)
+            ratio = np.sum(mask > 0) / mask.size
+            base_color_passed = ratio > 0.1
             
-            h_rad = (h_vals.astype(np.float32) * 2.0) * (np.pi / 180.0)
-            avg_x = np.mean(np.cos(h_rad))
-            avg_y = np.mean(np.sin(h_rad))
-            avg_hue_deg = np.arctan2(avg_y, avg_x) * (180.0 / np.pi)
-            if avg_hue_deg < 0:
-                avg_hue_deg += 360.0
-            avg_hue_opencv = avg_hue_deg / 2.0
-            avg_sat = np.mean(s_vals)
-            
-            # Base color range for 2000 (pink/magenta)
-            base_color_passed = (135.0 <= avg_hue_opencv <= 175.0) and (10.0 <= avg_sat <= 90.0)
-            
-            # Thread check for 2000 (intensity change valley check)
-            crop_thread = cv2.cvtColor(img[100:350, 560:630], cv2.COLOR_BGR2GRAY)
-            col_means = np.mean(crop_thread, axis=0)
-            valley_depth = np.mean(col_means) - np.min(col_means)
-            thread_passed = (valley_depth >= 14.0)
+            thread_crop = img[100:350, 580:610]
+            g_b_mask = (thread_crop[:, :, 1].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8) | \
+                       (thread_crop[:, :, 0].astype(np.int16) > thread_crop[:, :, 2].astype(np.int16) + 8)
+            thread_ratio = np.sum(g_b_mask) / g_b_mask.size
+            thread_passed = thread_ratio > 0.005
             
         return base_color_passed and thread_passed
 
@@ -233,7 +204,7 @@ def verify_watermark(img, denom):
     std_dev = np.std(gray)
     edges = cv2.Canny(gray, 30, 100)
     edge_density = np.sum(edges > 0) / edges.size
-    return (std_dev >= 5.0) and (std_dev <= 70.0) and (edge_density > 0.001) and (edge_density < 0.25)
+    return (std_dev >= 8.0) and (std_dev <= 60.0) and (edge_density > 0.005) and (edge_density < 0.15)
 
 def analyze_note(image_path, denom):
     img = cv2.imread(image_path)
@@ -355,8 +326,10 @@ def analyze_note(image_path, denom):
         
     passed_features = sum(feature_statuses)
     # Classification Verdict: A banknote is Genuine if it passes at least 10 features
-    verdict = (passed_features >= 10)
-    return verdict, passed_features, feature_statuses
+    flat_verdict = (passed_features >= 10)
+    # Veto-based Verdict: Also requires Feature 11 (Color & Thread Check, index 10) to pass
+    veto_verdict = flat_verdict and feature_statuses[10]
+    return flat_verdict, veto_verdict, passed_features, feature_statuses
 
 def report_accuracy_with_confidence(correct, total, confidence=0.95):
     """Wilson Score Interval implementation for accurate confidence reporting on small sample sizes."""
@@ -382,16 +355,18 @@ def run_evaluation():
     ]
     
     print("Executing Quantitative System Evaluation (Dual-Evaluation Headless Pipeline)...")
-    print("=" * 70)
+    print("=" * 75)
     
     # Real-World dataset (n=31): 19 Genuine, 12 Real Counterfeits (non-simulated)
     real_y_true = []
-    real_y_pred = []
+    real_y_pred_flat = []
+    real_y_pred_veto = []
     real_times = []
     
     # Robustness probe (n=38): 38 Simulated Counterfeits
     sim_y_true = []
-    sim_y_pred = []
+    sim_y_pred_flat = []
+    sim_y_pred_veto = []
     sim_times = []
     
     # Track overall features stats for real-world notes
@@ -406,23 +381,25 @@ def run_evaluation():
             
         print(f"\nProcessing directory: {folder} ({'Genuine' if label == 1 else 'Counterfeit'})")
         for file in sorted(os.listdir(folder)):
-            if not file.endswith(".jpg"):
+            if not file.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff")):
                 continue
             path = os.path.join(folder, file)
             
             start_note = time.perf_counter()
-            verdict, passed, statuses = analyze_note(path, denom)
+            flat_verdict, veto_verdict, passed, statuses = analyze_note(path, denom)
             end_note = time.perf_counter()
             
             elapsed = (end_note - start_note) * 1000.0 # ms
-            pred_label = 1 if verdict else 0
+            pred_flat = 1 if flat_verdict else 0
+            pred_veto = 1 if veto_verdict else 0
             
             # Determine if this is a simulated note or a real note
             is_sim = "sim_" in file or "synthetic" in folder
             
             if label == 1: # Genuine is always real
                 real_y_true.append(1)
-                real_y_pred.append(pred_label)
+                real_y_pred_flat.append(pred_flat)
+                real_y_pred_veto.append(pred_veto)
                 real_times.append(elapsed)
                 real_gen_total += 1
                 for f_idx, s in enumerate(statuses):
@@ -430,77 +407,112 @@ def run_evaluation():
             else: # Counterfeit
                 if is_sim:
                     sim_y_true.append(0)
-                    sim_y_pred.append(pred_label)
+                    sim_y_pred_flat.append(pred_flat)
+                    sim_y_pred_veto.append(pred_veto)
                     sim_times.append(elapsed)
                 else: # Real Counterfeit
                     real_y_true.append(0)
-                    real_y_pred.append(pred_label)
+                    real_y_pred_flat.append(pred_flat)
+                    real_y_pred_veto.append(pred_veto)
                     real_times.append(elapsed)
                     real_fake_total += 1
                     for f_idx, s in enumerate(statuses):
                         if s: real_feature_stats[f_idx][1] += 1
             
             category_str = "Genuine" if label == 1 else ("Counterfeit (Simulated)" if is_sim else "Counterfeit (Real)")
-            print(f"  File: {file:<25} Passed: {passed:>2}/12 ({passed/12.0*100.0:4.1f}%)  Time: {elapsed:5.1f} ms  Verdict: {'Genuine' if verdict else 'Counterfeit':<11} {'[CORRECT]' if pred_label == label else '[ERROR]'}")
+            print(f"  File: {file:<25} Passed: {passed:>2}/12 ({passed/12.0*100.0:4.1f}%)  Time: {elapsed:5.1f} ms  Flat Verdict: {'Genuine' if flat_verdict else 'Counterfeit':<11}  Veto Verdict: {'Genuine' if veto_verdict else 'Counterfeit':<11}")
             
     # Calculate Real-World (n=31) metrics
     real_y_true = np.array(real_y_true)
-    real_y_pred = np.array(real_y_pred)
-    real_tp = np.sum((real_y_true == 1) & (real_y_pred == 1))
-    real_tn = np.sum((real_y_true == 0) & (real_y_pred == 0))
-    real_fp = np.sum((real_y_true == 0) & (real_y_pred == 1))
-    real_fn = np.sum((real_y_true == 1) & (real_y_pred == 0))
+    real_y_pred_flat = np.array(real_y_pred_flat)
+    real_y_pred_veto = np.array(real_y_pred_veto)
     real_total = len(real_y_true)
     
-    real_accuracy, real_ci_l, real_ci_u = report_accuracy_with_confidence(real_tp + real_tn, real_total)
-    real_precision = real_tp / (real_tp + real_fp) if (real_tp + real_fp) > 0 else 0
-    real_recall = real_tp / (real_tp + real_fn) if (real_tp + real_fn) > 0 else 0
-    real_f1 = 2 * real_precision * real_recall / (real_precision + real_recall) if (real_precision + real_recall) > 0 else 0
+    # Flat metrics
+    flat_tp = np.sum((real_y_true == 1) & (real_y_pred_flat == 1))
+    flat_tn = np.sum((real_y_true == 0) & (real_y_pred_flat == 0))
+    flat_fp = np.sum((real_y_true == 0) & (real_y_pred_flat == 1))
+    flat_fn = np.sum((real_y_true == 1) & (real_y_pred_flat == 0))
+    flat_accuracy, flat_ci_l, flat_ci_u = report_accuracy_with_confidence(flat_tp + flat_tn, real_total)
+    flat_precision = flat_tp / (flat_tp + flat_fp) if (flat_tp + flat_fp) > 0 else 0
+    flat_recall = flat_tp / (flat_tp + flat_fn) if (flat_tp + flat_fn) > 0 else 0
+    flat_f1 = 2 * flat_precision * flat_recall / (flat_precision + flat_recall) if (flat_precision + flat_recall) > 0 else 0
+    
+    # Veto metrics
+    veto_tp = np.sum((real_y_true == 1) & (real_y_pred_veto == 1))
+    veto_tn = np.sum((real_y_true == 0) & (real_y_pred_veto == 0))
+    veto_fp = np.sum((real_y_true == 0) & (real_y_pred_veto == 1))
+    veto_fn = np.sum((real_y_true == 1) & (real_y_pred_veto == 0))
+    veto_accuracy, veto_ci_l, veto_ci_u = report_accuracy_with_confidence(veto_tp + veto_tn, real_total)
+    veto_precision = veto_tp / (veto_tp + veto_fp) if (veto_tp + veto_fp) > 0 else 0
+    veto_recall = veto_tp / (veto_tp + veto_fn) if (veto_tp + veto_fn) > 0 else 0
+    veto_f1 = 2 * veto_precision * veto_recall / (veto_precision + veto_recall) if (veto_precision + veto_recall) > 0 else 0
+    
     real_avg_time = sum(real_times) / len(real_times) if real_times else 0
     
     # Calculate Synthetic Robustness (n=38) metrics
     sim_y_true = np.array(sim_y_true)
-    sim_y_pred = np.array(sim_y_pred)
+    sim_y_pred_flat = np.array(sim_y_pred_flat)
+    sim_y_pred_veto = np.array(sim_y_pred_veto)
     sim_total = len(sim_y_true)
-    sim_tn = np.sum((sim_y_true == 0) & (sim_y_pred == 0))
-    sim_fp = np.sum((sim_y_true == 0) & (sim_y_pred == 1))
-    sim_accuracy = sim_tn / sim_total if sim_total > 0 else 0
+    
+    sim_flat_tn = np.sum((sim_y_true == 0) & (sim_y_pred_flat == 0))
+    sim_flat_fp = np.sum((sim_y_true == 0) & (sim_y_pred_flat == 1))
+    sim_flat_accuracy = sim_flat_tn / sim_total if sim_total > 0 else 0
+    
+    sim_veto_tn = np.sum((sim_y_true == 0) & (sim_y_pred_veto == 0))
+    sim_veto_fp = np.sum((sim_y_true == 0) & (sim_y_pred_veto == 1))
+    sim_veto_accuracy = sim_veto_tn / sim_total if sim_total > 0 else 0
+    
     sim_avg_time = sum(sim_times) / len(sim_times) if sim_times else 0
     
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 75)
     print("EVALUATION 1: PRIMARY BENCHMARK ON REAL BANKNOTES (n=31)")
-    print("=" * 70)
+    print("=" * 75)
     print(f"Total Banknotes Analysed     : {real_total}")
-    print(f"Classification Accuracy      : {real_accuracy * 100:.2f}%")
-    print(f"95% Confidence Interval (CI) : [{real_ci_l*100:.1f}%, {real_ci_u*100:.1f}%] (Wilson Score)")
-    print(f"Classifier Precision         : {real_precision * 100:.2f}%")
-    print(f"Classifier Recall (Sens.)    : {real_recall * 100:.2f}%")
-    print(f"F1 Classifier Score          : {real_f1 * 100:.2f}%")
     print(f"Average Processing Speed     : {real_avg_time:.1f} ms per banknote")
-    print("\n----------------------------------------------------------------------")
-    print("CONFUSION MATRIX (REAL BANKNOTES)")
-    print("----------------------------------------------------------------------")
-    print(f"                     Predicted Genuine    Predicted Counterfeit")
-    print(f"Actual Genuine       {real_tp:<20} {real_fn:<20}")
-    print(f"Actual Counterfeit   {real_fp:<20} {real_tn:<20}")
+    print("\n  [Flat Voting Classifier (Baseline)]")
+    print(f"  Classification Accuracy      : {flat_accuracy * 100:.2f}%")
+    print(f"  95% Confidence Interval (CI) : [{flat_ci_l*100:.1f}%, {flat_ci_u*100:.1f}%] (Wilson Score)")
+    print(f"  Classifier Precision         : {flat_precision * 100:.2f}%")
+    print(f"  Classifier Recall (Sens.)    : {flat_recall * 100:.2f}%")
+    print(f"  F1 Classifier Score          : {flat_f1 * 100:.2f}%")
+    print("  CONFUSION MATRIX:")
+    print(f"                       Predicted Gen    Predicted Fake")
+    print(f"  Actual Genuine       {flat_tp:<16} {flat_fn:<16}")
+    print(f"  Actual Counterfeit   {flat_fp:<16} {flat_tn:<16}")
     
-    print("\n" + "=" * 70)
+    print("\n  [Veto-Based Classifier (Feature 11 Override)]")
+    print(f"  Classification Accuracy      : {veto_accuracy * 100:.2f}%")
+    print(f"  95% Confidence Interval (CI) : [{veto_ci_l*100:.1f}%, {veto_ci_u*100:.1f}%] (Wilson Score)")
+    print(f"  Classifier Precision         : {veto_precision * 100:.2f}%")
+    print(f"  Classifier Recall (Sens.)    : {veto_recall * 100:.2f}%")
+    print(f"  F1 Classifier Score          : {veto_f1 * 100:.2f}%")
+    print("  CONFUSION MATRIX:")
+    print(f"                       Predicted Gen    Predicted Fake")
+    print(f"  Actual Genuine       {veto_tp:<16} {veto_fn:<16}")
+    print(f"  Actual Counterfeit   {veto_fp:<16} {veto_tn:<16}")
+    
+    print("\n" + "=" * 75)
     print("EVALUATION 2: ROBUSTNESS PROBE ON SYNTHESIZED BANKNOTES (n=38)")
-    print("=" * 70)
+    print("=" * 75)
     print(f"Total Banknotes Analysed     : {sim_total}")
-    print(f"Attack Rejection Accuracy    : {sim_accuracy * 100:.2f}%")
     print(f"Average Processing Speed     : {sim_avg_time:.1f} ms per banknote")
-    print("\n----------------------------------------------------------------------")
-    print("DETECTION PROFILE (SYNTHETIC ATTACKS)")
-    print("----------------------------------------------------------------------")
-    print(f"Synthesized Counterfeits Correctly Rejected: {sim_tn} / {sim_total}")
-    print(f"Synthesized Counterfeits Leaked (False Pos): {sim_fp} / {sim_total}")
+    print(f"\n  [Flat Voting Classifier (Baseline)]")
+    print(f"  Attack Rejection Accuracy    : {sim_flat_accuracy * 100:.2f}%")
+    print(f"  Counterfeits Rejected        : {sim_flat_tn} / {sim_total}")
+    print(f"  Counterfeits Leaked          : {sim_flat_fp} / {sim_total}")
     
-    print("\n" + "=" * 70)
+    print(f"\n  [Veto-Based Classifier (Feature 11 Override)]")
+    print(f"  Attack Rejection Accuracy    : {sim_veto_accuracy * 100:.2f}%")
+    print(f"  Counterfeits Rejected        : {sim_veto_tn} / {sim_total}")
+    print(f"  Counterfeits Leaked          : {sim_veto_fp} / {sim_total}")
+    
+    print("\n" + "=" * 75)
     print("REAL-WORLD FEATURE DISCRIMINATIVE EFFECTIVENESS ANALYSIS")
-    print("=" * 70)
+    print("=" * 75)
     print(f"Feature Number    Genuine Pass Rate (%)    Counterfeit Pass Rate (%)   Discriminability (Gen - Fake)")
-    print("-" * 70)
+    print("-" * 75)
     feature_names = [
         "F1 (Template 1)   ",
         "F2 (Template 2)   ",
@@ -520,7 +532,7 @@ def run_evaluation():
         fake_pass_pct = (stats[1] / real_fake_total * 100) if real_fake_total > 0 else 0
         discriminability = gen_pass_pct - fake_pass_pct
         print(f"Feature {idx+1:<2} {feature_names[idx]} : {gen_pass_pct:5.1f}%                {fake_pass_pct:5.1f}%                      {discriminability:+5.1f}%")
-    print("=" * 70)
+    print("=" * 75)
 
 if __name__ == '__main__':
     run_evaluation()
