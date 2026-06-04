@@ -3,19 +3,24 @@ import numpy as np
 import os
 
 def paint_out_thread(img):
-    """Seamlessly paint out the security thread by replacing it with adjacent pixels."""
+    """Simulate a printed/photocopied thread by converting the thread region to grayscale.
+    This destroys the color-shifting property (making it fail the system's test) while looking
+    perfectly realistic to a human evaluator."""
     h, w = img.shape[:2]
-    start_x = int(w * 0.47)
-    end_x = int(w * 0.54)
+    start_x = int(w * 0.49)
+    end_x = int(w * 0.53)
     
     modified = img.copy()
-    # Replace thread region with content from the left adjacent column
-    for x in range(start_x, end_x):
-        offset = x - start_x + 1
-        source_x = start_x - offset
-        if source_x >= 0:
-            modified[:, x] = img[:, source_x]
-            
+    thread_region = modified[:, start_x:end_x]
+    
+    # Convert to grayscale to remove color-shifting properties
+    gray_thread = cv2.cvtColor(thread_region, cv2.COLOR_BGR2GRAY)
+    bgr_thread = cv2.cvtColor(gray_thread, cv2.COLOR_GRAY2BGR)
+    
+    # Darken slightly to look like printed ink
+    bgr_thread = (bgr_thread * 0.85).astype(np.uint8)
+    
+    modified[:, start_x:end_x] = bgr_thread
     return modified
 
 def shift_hue(img, shift_val=20):
@@ -43,7 +48,7 @@ def simulate_fake_dataset():
             os.makedirs(dst_dir)
             
         print(f"Synthesizing fakes from {src_dir} into {dst_dir}...")
-        files = [f for f in os.listdir(src_dir) if f.endswith(".jpg")]
+        files = [f for f in os.listdir(src_dir) if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff"))]
         
         for file_name in files:
             file_path = os.path.join(src_dir, file_name)
