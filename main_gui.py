@@ -139,7 +139,10 @@ class CurrencyDetectorApp:
         # Input image
         c_input = Canvas(master=sub_frame2, width=675, height=300)
         c_input.pack()
+        from align_note import align_note
+        denom_str = '500' if self.option.get() == 1 else '2000'
         img_inp = cv2.imread(self.image_path)
+        img_inp = align_note(img_inp, denom_str)
         img_inp = cv2.cvtColor(img_inp, cv2.COLOR_BGR2RGB)
         img_inp = cv2.resize(img_inp, (675, 300))
         img_inp = ImageTk.PhotoImage(PIL_Image.fromarray(img_inp))
