@@ -20,6 +20,8 @@ import os
 STANDARD_DIMS = {
     '500': (1167, 519),   # (width, height)
     '2000': (1165, 455),
+    'LKR_1000': (1104, 500),
+    'LKR_5000': (1141, 500),
 }
 
 # Cache for loaded and preprocessed reference images to avoid reloading
@@ -33,7 +35,12 @@ def _get_reference(denom):
     
     # We must use the exact source images from which the feature templates were cropped
     # to ensure homography perfectly aligns the features to the templates.
-    source_img = f'{denom}_s4.jpg' if denom == '500' else f'{denom}_s2.jpg'
+    if denom == 'LKR_1000':
+        source_img = 'Scanned_20260608-1322-01.jpg'
+    elif denom == 'LKR_5000':
+        source_img = 'Scanned_20260608-1326-01.jpg'
+    else:
+        source_img = f'{denom}_s4.jpg' if denom == '500' else f'{denom}_s2.jpg'
     
     base_dir = os.path.dirname(os.path.dirname(__file__))
     ref_path = os.path.join(base_dir, 'data', 'genuine', denom, source_img)
