@@ -3,6 +3,7 @@ import numpy as np
 import os
 import time
 from skimage.metrics import structural_similarity as ssim
+from align_note import align_note
 
 def calculate_ssim(template_img, query_img):
     if template_img is None or query_img is None or template_img.size == 0 or query_img.size == 0:
@@ -229,11 +230,8 @@ def analyze_note(image_path, denom, return_images=False):
             return False, 0, [False]*12, []
         return False, False, 0, [False]*12
         
-    # Preprocessing
-    if denom == '500':
-        img = cv2.resize(img, (1167, 519))
-    else:
-        img = cv2.resize(img, (1165, 455))
+    # Preprocessing — automatic alignment (handles rotation + perspective correction)
+    img = align_note(img, denom)
         
     blur_img = cv2.GaussianBlur(img, (5, 5), 0)
     gray_img = cv2.cvtColor(blur_img, cv2.COLOR_BGR2GRAY)
