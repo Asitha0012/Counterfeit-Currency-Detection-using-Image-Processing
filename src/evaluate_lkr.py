@@ -327,47 +327,92 @@ def verify_security_thread(img, denom):
     
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    valid_rects = []
-    explain_img = panel.copy()
-    
+    # Get raw candidate bounding boxes
+    raw_rects = []
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        # Windowed thread segments are distinct tall rectangles
-        if w > 10 and h > 20: 
-            valid_rects.append((x, y, w, h))
+        if w > 5 and h > 5:
+            raw_rects.append((x, y, w, h))
             
-    # Check if they are vertically stacked in the exact same column
+    # Calculate the average width of original valid unmerged rectangles to prevent
+    # horizontal shifts during merging from inflating the final width metric.
+    original_widths = [w for x, y, w, h in raw_rects if w > 10]
+    avg_original_width = np.mean(original_widths) if original_widths else 0
+    
+    # Sort by Y-coordinate and vertically merge segments that are close to each other
+    raw_rects = sorted(raw_rects, key=lambda r: r[1])
+    merged = True
+    while merged:
+        merged = False
+        used = set()
+        for i in range(len(raw_rects)):
+            if i in used:
+                continue
+            rx, ry, rw, rh = raw_rects[i]
+            
+            merge_idx = -1
+            for j in range(i + 1, len(raw_rects)):
+                if j in used:
+                    continue
+                ox, oy, ow, oh = raw_rects[j]
+                
+                # Check horizontal overlap and vertical gap proximity
+                overlap_x = max(rx, ox) <= min(rx + rw, ox + ow) + 5
+                gap = oy - (ry + rh)
+                
+                if overlap_x and gap <= 15:
+                    merge_idx = j
+                    break
+            
+            if merge_idx != -1:
+                ox, oy, ow, oh = raw_rects[merge_idx]
+                min_x = min(rx, ox)
+                min_y = min(ry, oy)
+                max_x = max(rx + rw, ox + ow)
+                max_y = max(ry + rh, oy + oh)
+                
+                raw_rects[i] = (min_x, min_y, max_x - min_x, max_y - min_y)
+                used.add(merge_idx)
+                merged = True
+                break
+        
+        if merged:
+            raw_rects = [raw_rects[k] for k in range(len(raw_rects)) if k not in used]
+            raw_rects = sorted(raw_rects, key=lambda r: r[1])
+            
+    # Filter merged rectangles by final segment requirements
+    valid_rects = []
+    explain_img = panel.copy()
+    for rx, ry, rw, rh in raw_rects:
+        if rw > 10 and rh > 20:
+            valid_rects.append((rx, ry, rw, rh))
+            
+    # Count how many rectangles are vertically stacked in the same column
     max_stacked = 0
     best_x = -1
     if valid_rects:
         for rx, ry, rw, rh in valid_rects:
-            # Count how many rectangles are in the same X column (within 15 pixels)
             stacked = sum(1 for ox, oy, ow, oh in valid_rects if abs(ox - rx) <= 15)
             if stacked > max_stacked:
                 max_stacked = stacked
                 best_x = rx
                 
-    # Draw the valid stacked rectangles
     if max_stacked == 5:
         for rx, ry, rw, rh in valid_rects:
             if abs(rx - best_x) <= 15:
                 cv2.rectangle(explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
                 
-    # A genuine windowed thread usually has 5 segments.
-    # However, because there is text printed inside the thread, and because scanners
-    # can blur the edges, segments can mathematically merge (resulting in 4) or split (resulting in 6).
-    # Counterfeits will still violently fail because they print a single solid line (resulting in 1 segment).
-    passed = 4 <= max_stacked <= 6
+    # A genuine windowed thread must have exactly 5 segments
+    passed = max_stacked == 5
     
-    # Calculate the physical width of the thread to match CBSL specifications
-    # Based on our calibration, ~7.3 pixels equals 1 millimeter at this scan resolution
-    avg_width_px = np.mean([rw for rx, ry, rw, rh in valid_rects]) if valid_rects else 0
-    measured_mm = avg_width_px / 7.3
-    
-    # Check if the width matches the denomination spec (LKR 5000 = 3mm, LKR 1000 = 2.5mm)
+    # Calculate measured mm using the original unmerged width
+    if avg_original_width > 0:
+        measured_mm = avg_original_width / 7.3
+    else:
+        avg_width_px = np.mean([rw for rx, ry, rw, rh in valid_rects]) if valid_rects else 0
+        measured_mm = avg_width_px / 7.3
+        
     expected_mm = 3.0 if denom == 'LKR_5000' else 2.5
-    
-    # Allow 0.5mm tolerance for scanner blur
     if abs(measured_mm - expected_mm) > 0.5:
         passed = False
         
