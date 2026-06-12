@@ -7,6 +7,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # IDE configs and extensions
+.kiro/
 .qodo/
 .vscode/
 .idea/
@@ -18,3 +19,5 @@ desktop.ini
 # Project Documentation
 docs/
 
+# Generated Data
+data/augmented_testing/
