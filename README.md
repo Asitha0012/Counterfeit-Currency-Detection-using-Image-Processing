@@ -84,7 +84,4 @@ python scripts\test_augmented_datasets.py
 ```
 This will evaluate all notes and print the final Accuracy, Precision, and False-Positive metrics directly to your terminal.
 
----
-<div align="center">
-<i>Built for Academic Evaluation in Computer Vision</i>
-</div>
+
