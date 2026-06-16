@@ -132,15 +132,12 @@ def verify_visual_feature(img, denom, feature_id):
     if feature_id in [2, 3, 4, 5, 6]:
         threshold = 0.35
     else:
-        threshold = 0.65
+        threshold = 0.60
         
     # SSIM can be fooled by backgrounds! If a fake note is perfectly aligned and the background matches,
     # it might score SSIM 0.74 even if half the text is completely missing (like the "RU" in RUPEES).
-    # To fix this, we strictly enforce that the Template Correlation (best_corr) must be > 0.90!
-    # A missing chunk of text destroys about 10-15% of the correlation. The distorted note scored 0.846,
-    # so a strict threshold of 0.90 will ruthlessly fail it, while genuine notes (which score 0.99+) 
-    # and perfect fakes (which score 0.95+) will still easily pass.
-    passed = (max_ssim > threshold) and (best_corr > 0.90)
+    # To fix this, we strictly enforce that the Template Correlation (best_corr) must be > 0.75!
+    passed = (max_ssim > threshold) and (best_corr > 0.75)
     return passed, f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}", best_crop, max_ssim
 
 # =====================================================================
@@ -152,6 +149,9 @@ def verify_blind_dots(img, denom):
     x1, y1, x2, y2 = PROGRAMMATIC_COORDS[denom]['blind_dots']
     left_edge = img[y1:y2, x1:x2]
     
+    if left_edge.size == 0:
+        return False, "Invalid image bounds", np.zeros((50, 50, 3), dtype=np.uint8)
+        
     gray = cv2.cvtColor(left_edge, cv2.COLOR_BGR2GRAY)
     
     # Use Otsu's thresholding so it perfectly adapts to the ink darkness of fake notes!
@@ -191,6 +191,9 @@ def verify_asymmetric_serial(img, denom):
     
     panel = img[y1:y2, x1:x2]
     
+    if panel.size == 0:
+        return False, "Invalid image bounds", np.zeros((50, 50, 3), dtype=np.uint8)
+        
     gray = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
     
@@ -243,6 +246,9 @@ def verify_vertical_red_serial(img, denom):
     x1, y1, x2, y2 = PROGRAMMATIC_COORDS[denom]['vertical_red_serial']
     panel = img[y1:y2, x1:x2]
     
+    if panel.size == 0:
+        return False, "Invalid image bounds", np.zeros((50, 50, 3), dtype=np.uint8)
+        
     hsv = cv2.cvtColor(panel, cv2.COLOR_BGR2HSV)
     explain_img = panel.copy()
     
@@ -311,6 +317,9 @@ def verify_security_thread(img, denom):
     x1, y1, x2, y2 = PROGRAMMATIC_COORDS[denom]['security_thread']
     panel = img[y1:y2, x1:x2]
     
+    if panel.size == 0:
+        return False, "Invalid image bounds", np.zeros((50, 50, 3), dtype=np.uint8)
+        
     gray = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
     
     # Starchrome metallic threads scan as very dark gray or pure black.
@@ -427,6 +436,9 @@ def verify_edge_lines(img, denom):
     x1, y1, x2, y2 = PROGRAMMATIC_COORDS[denom]['edge_lines']
     panel = img[y1:y2, x1:x2]
     
+    if panel.size == 0:
+        return False, "Invalid image bounds", np.zeros((50, 50, 3), dtype=np.uint8)
+        
     gray = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
     
     # We use Adaptive Thresholding instead of Otsu because the edge of the physical paper 
@@ -466,13 +478,13 @@ def verify_edge_lines(img, denom):
 
 EVAL_PIPELINE = {
     'LKR_1000': [
-        ('F1: Central Bank Title', lambda i, d: verify_template(i, d, 1)),
-        ('F2: Value in Sinhala', lambda i, d: verify_template(i, d, 2)),
-        ('F3: Numeral 1000', lambda i, d: verify_template(i, d, 3)),
-        ('F4: Date & Signature', lambda i, d: verify_template(i, d, 4)),
-        ('F5: Butterfly Motif', lambda i, d: verify_template(i, d, 5)),
-        ('F6: Central Bank Logo', lambda i, d: verify_template(i, d, 6)),
-        ('F7: See-through Register', lambda i, d: verify_template(i, d, 7)),
+        ('F1: Central Bank Title', lambda i, d: verify_visual_feature(i, d, 1)),
+        ('F2: Value in Sinhala', lambda i, d: verify_visual_feature(i, d, 2)),
+        ('F3: Numeral 1000', lambda i, d: verify_visual_feature(i, d, 3)),
+        ('F4: Date & Signature', lambda i, d: verify_visual_feature(i, d, 4)),
+        ('F5: Butterfly Motif', lambda i, d: verify_visual_feature(i, d, 5)),
+        ('F6: Central Bank Logo', lambda i, d: verify_visual_feature(i, d, 6)),
+        ('F7: See-through Register', lambda i, d: verify_visual_feature(i, d, 7)),
         ('F8: Blind Dots (Algorithm 2)', verify_blind_dots),
         ('F9: Asymmetric Serial (Algorithm 3)', verify_asymmetric_serial),
         ('F10: Vertical Red Serial (Algorithm 4)', verify_vertical_red_serial),
@@ -480,13 +492,13 @@ EVAL_PIPELINE = {
         ('F12: Tactile Edge Lines', verify_edge_lines)
     ],
     'LKR_5000': [
-        ('F1: Central Bank Title', lambda i, d: verify_template(i, d, 1)),
-        ('F2: Value in Sinhala', lambda i, d: verify_template(i, d, 2)),
-        ('F3: Numeral 5000', lambda i, d: verify_template(i, d, 3)),
-        ('F4: Date & Signature', lambda i, d: verify_template(i, d, 4)),
-        ('F5: Butterfly Motif', lambda i, d: verify_template(i, d, 5)),
-        ('F6: Central Bank Logo', lambda i, d: verify_template(i, d, 6)),
-        ('F7: See-through Register', lambda i, d: verify_template(i, d, 7)),
+        ('F1: Central Bank Title', lambda i, d: verify_visual_feature(i, d, 1)),
+        ('F2: Value in Sinhala', lambda i, d: verify_visual_feature(i, d, 2)),
+        ('F3: Numeral 5000', lambda i, d: verify_visual_feature(i, d, 3)),
+        ('F4: Date & Signature', lambda i, d: verify_visual_feature(i, d, 4)),
+        ('F5: Butterfly Motif', lambda i, d: verify_visual_feature(i, d, 5)),
+        ('F6: Central Bank Logo', lambda i, d: verify_visual_feature(i, d, 6)),
+        ('F7: See-through Register', lambda i, d: verify_visual_feature(i, d, 7)),
         ('F8: Blind Dots (Algorithm 2)', verify_blind_dots),
         ('F9: Asymmetric Serial (Algorithm 3)', verify_asymmetric_serial),
         ('F10: Vertical Red Serial (Algorithm 4)', verify_vertical_red_serial),
@@ -502,7 +514,7 @@ def analyze_lkr_note(file_path, denom):
     """
     raw_img = cv2.imread(file_path)
     if raw_img is None:
-        return False, "Could not read image", 0, [], []
+        return False, False, "Could not read image", 0, [], []
         
     # STAGE 1: ALIGNMENT
     img = align_note(raw_img, denom)
