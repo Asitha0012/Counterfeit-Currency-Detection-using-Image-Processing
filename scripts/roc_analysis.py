@@ -13,24 +13,23 @@ from evaluate_lkr import analyze_lkr_note
 def collect_scores():
     augmented_base = os.path.join(base_dir, "data", "augmented_testing")
     
-    genuine_dir = os.path.join(augmented_base, "Genuine", "LKR_1000")
-    fake_dir = os.path.join(augmented_base, "Fake", "LKR_1000")
-    
-    genuine_imgs = glob.glob(os.path.join(genuine_dir, '*.jpg'))[:30] # Limit to 30 for speed
-    fake_imgs = glob.glob(os.path.join(fake_dir, '*.jpg'))[:30]
+    genuine_imgs = glob.glob(os.path.join(augmented_base, "Genuine", "**", "*.jpg"), recursive=True)
+    fake_imgs = glob.glob(os.path.join(augmented_base, "Fake", "**", "*.jpg"), recursive=True)
     
     y_true = []
     y_scores = []
     
-    print("Extracting scores from Genuine notes...")
+    print(f"Extracting scores from {len(genuine_imgs)} Genuine notes...")
     for img_path in genuine_imgs:
-        _, _, _, score, _, _ = analyze_lkr_note(img_path, "LKR_1000")
+        denom = "LKR_1000" if "LKR_1000" in img_path else "LKR_5000"
+        _, _, _, score, _, _ = analyze_lkr_note(img_path, denom)
         y_true.append(1)
-        y_scores.append(score / 100.0) # Convert percentage to 0-1 probability
+        y_scores.append(score / 100.0)
         
-    print("Extracting scores from Fake notes...")
+    print(f"Extracting scores from {len(fake_imgs)} Fake notes...")
     for img_path in fake_imgs:
-        _, _, _, score, _, _ = analyze_lkr_note(img_path, "LKR_1000")
+        denom = "LKR_1000" if "LKR_1000" in img_path else "LKR_5000"
+        _, _, _, score, _, _ = analyze_lkr_note(img_path, denom)
         y_true.append(0)
         y_scores.append(score / 100.0)
         
@@ -51,9 +50,7 @@ def plot_roc(y_true, y_scores):
     plt.legend(loc="lower right")
     
     # Save the figure to the artifacts directory so the user can see it!
-    # The brain dir requires absolute path
-    brain_dir = os.path.join(os.environ['USERPROFILE'], '.gemini', 'antigravity-ide', 'brain', '8912d3ae-1929-438e-812f-4925e7c66e2a')
-    out_path = os.path.join(brain_dir, 'ROC_Curve.png')
+    out_path = os.path.join(base_dir, 'ROC_Curve.png')
     plt.savefig(out_path)
     print(f"ROC curve saved to {out_path}")
     

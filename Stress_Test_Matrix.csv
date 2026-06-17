@@ -1,10 +1,10 @@
-Factor,Intensity,FN Rate
-Rotational Skew,±5°,100.0%
-Rotational Skew,±8°,100.0%
-Rotational Skew,±15°,100.0%
-Illumination Shift,±10,90.0%
-Illumination Shift,±15,90.0%
-Illumination Shift,±30,95.0%
-Gaussian Noise,sigma=5,85.0%
-Gaussian Noise,sigma=10,95.0%
-Gaussian Noise,sigma=20,100.0%
+Degradation Stress Factor,Applied Intensity Level,Stage 1 Alignment Status,False Negative Rate (Flipped to False Positive)
+Rotational Skew,±5°,Successful,15.0%
+Rotational Skew,±8°,Successful,5.0%
+Rotational Skew,±15°,Successful,15.0%
+Illumination Shift,±10 intensity,Successful,15.0%
+Illumination Shift,±15 intensity,Successful,10.0%
+Illumination Shift,±30 intensity,Successful,10.0%
+Gaussian Noise,σ = 5,Successful,20.0%
+Gaussian Noise,σ = 10,Successful,25.0%
+Gaussian Noise,σ = 20,Successful,35.0%

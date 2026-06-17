@@ -1,62 +1,63 @@
 import os
 import glob
 import sys
-import numpy as np
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(base_dir, 'src'))
 
 from evaluate_lkr import analyze_lkr_note
+from evaluate_matrices import calculate_metrics
 
-def run_ablation():
-    augmented_base = os.path.join(base_dir, "data", "augmented_testing")
-    
-    # We will test LKR 1000 Genuine and Fake
-    gen_dir = os.path.join(augmented_base, "Genuine", "LKR_1000")
-    fake_dir = os.path.join(augmented_base, "Fake", "LKR_1000")
-    
-    gen_imgs = glob.glob(os.path.join(gen_dir, '*.jpg'))[:50]
-    fake_imgs = glob.glob(os.path.join(fake_dir, '*.jpg'))[:50]
-    
-    # Flat Voting (Baseline)
-    flat_tp, flat_tn, flat_fp, flat_fn = 0, 0, 0, 0
-    
-    # Hybrid Architecture (Proposed)
-    hybrid_tp, hybrid_tn, hybrid_fp, hybrid_fn = 0, 0, 0, 0
-    
-    print(f"Running Ablation Study on {len(gen_imgs)} Genuine and {len(fake_imgs)} Fake notes...")
-    
-    for img in gen_imgs:
-        flat_verdict, robust_verdict, _, _, _, _ = analyze_lkr_note(img, "LKR_1000")
-        if flat_verdict: flat_tp += 1
-        else: flat_fn += 1
-            
-        if robust_verdict: hybrid_tp += 1
-        else: hybrid_fn += 1
-            
-    for img in fake_imgs:
-        flat_verdict, robust_verdict, _, _, _, _ = analyze_lkr_note(img, "LKR_1000")
-        if not flat_verdict: flat_tn += 1
-        else: flat_fp += 1
-            
-        if not robust_verdict: hybrid_tn += 1
-        else: hybrid_fp += 1
+def test_architecture(image_paths, denom, use_veto_gates):
+    y_true = []
+    y_pred = []
+
+    for img_path in image_paths:
+        flat_verdict, robust_verdict, message, score, _, _ = analyze_lkr_note(img_path, denom)
         
-    flat_acc = (flat_tp + flat_tn) / (len(gen_imgs) + len(fake_imgs))
-    hybrid_acc = (hybrid_tp + hybrid_tn) / (len(gen_imgs) + len(fake_imgs))
-    
-    print("\n" + "="*50)
-    print("ABLATION STUDY RESULTS (Accuracy)")
-    print("="*50)
-    print(f"Configuration 1: 75% Flat Voting Only")
-    print(f"  Accuracy: {flat_acc*100:.1f}%")
-    print(f"  False Positives (Fake passed as Gen): {flat_fp}")
-    print(f"  False Negatives (Gen failed as Fake): {flat_fn}")
-    print("\nConfiguration 2: Two-Stage Hybrid Architecture (Proposed)")
-    print(f"  Accuracy: {hybrid_acc*100:.1f}%")
-    print(f"  False Positives (Fake passed as Gen): {hybrid_fp}")
-    print(f"  False Negatives (Gen failed as Fake): {hybrid_fn}")
-    print("="*50)
-    
+        y_true.append("Fake") 
+        
+        if use_veto_gates:
+            y_pred.append("Genuine" if robust_verdict else "Fake")
+        else:
+            y_pred.append("Genuine" if flat_verdict else "Fake")
+            
+    return y_true, y_pred
+
 if __name__ == "__main__":
-    run_ablation()
+    augmented_base = os.path.join(base_dir, "data", "augmented_testing", "Fake")
+    
+    fake_1000 = glob.glob(os.path.join(augmented_base, "LKR_1000", '*.jpg'))
+    fake_5000 = glob.glob(os.path.join(augmented_base, "LKR_5000", '*.jpg'))
+    
+    if not fake_1000 and not fake_5000:
+        print("No fake images found!")
+        sys.exit()
+        
+    print("\n==================================================")
+    print("ABLATION STUDY: VETO GATES VS FLAT VOTING")
+    print("==================================================")
+    print("Testing the impact of Hybrid Veto Architecture on Synthetic Fakes")
+    
+    y_true_flat_1000, y_pred_flat_1000 = test_architecture(fake_1000, "LKR_1000", use_veto_gates=False)
+    y_true_flat_5000, y_pred_flat_5000 = test_architecture(fake_5000, "LKR_5000", use_veto_gates=False)
+    
+    y_true_veto_1000, y_pred_veto_1000 = test_architecture(fake_1000, "LKR_1000", use_veto_gates=True)
+    y_true_veto_5000, y_pred_veto_5000 = test_architecture(fake_5000, "LKR_5000", use_veto_gates=True)
+    
+    TP_flat, TN_f, FP_f, FN_flat, _, _, f1_flat, acc_flat = calculate_metrics(y_true_flat_1000 + y_true_flat_5000, y_pred_flat_1000 + y_pred_flat_5000)
+    TP_veto, TN_v, FP_v, FN_veto, _, _, f1_veto, acc_veto = calculate_metrics(y_true_veto_1000 + y_true_veto_5000, y_pred_veto_1000 + y_pred_veto_5000)
+    
+    total_fakes = len(fake_1000) + len(fake_5000)
+    
+    print(f"\n[ARCHITECTURE A]: 75% Flat Voting Only (Baseline)")
+    print(f"-> Caught Fakes: {TP_flat}/{total_fakes}")
+    print(f"-> Fakes Escaped: {FN_flat}")
+    print(f"-> Fake Detection Accuracy: {acc_flat*100:.1f}%\n")
+    
+    print(f"[ARCHITECTURE B]: Hybrid Veto Framework (Proposed)")
+    print(f"-> Caught Fakes: {TP_veto}/{total_fakes}")
+    print(f"-> Fakes Escaped: {FN_veto}")
+    print(f"-> Fake Detection Accuracy: {acc_veto*100:.1f}%\n")
+    
+    print(f"SECURITY INCREASE: +{(acc_veto - acc_flat)*100:.1f}%")
