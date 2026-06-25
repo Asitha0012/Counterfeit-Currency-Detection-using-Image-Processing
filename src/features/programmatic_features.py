@@ -8,7 +8,7 @@ import numpy as np
 PROGRAMMATIC_COORDS = {
     'LKR_1000': {
         'blind_dots': (40, 110, 82, 310),
-        'asymmetric_serial': (75, 120, 290, 200),
+        'asymmetric_serial': (65, 120, 290, 200),
         'vertical_red_serial': (803, 120, 868, 398),
         'security_thread': (425, 42, 530, 486),
         'edge_lines': (1051, 192, 1103, 338)
@@ -91,34 +91,53 @@ def verify_asymmetric_serial(img, denom):
     
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        if w >= 2 and h >= 6 and (w * h) > 15:
+        if w >= 5 and h >= 10 and (w * h) > 30:
             aspect_ratio = float(w) / h
-            if 0.15 < aspect_ratio < 2.0:
+            if 0.15 < aspect_ratio < 2.5:
                 if x > 2 and (x + w) < (panel_width - 2):
                     rects.append((x, y, w, h))
-            
-    # Filter out noise by taking the 10 largest rectangles (characters)
-    rects = sorted(rects, key=lambda r: r[2] * r[3], reverse=True)[:10]
-    
-    # Sort left-to-right
-    rects = sorted(rects, key=lambda r: r[0])
-    
+                
+    split_rects = []
+    for r in rects:
+        x, y, w, h = r
+        if w / h > 1.3:
+            # Split merged characters
+            half_w = w // 2
+            split_rects.append((x, y, half_w, h))
+            split_rects.append((x + half_w, y, w - half_w, h))
+        else:
+            if w / h > 0.15:
+                split_rects.append(r)
+                
     explain_img = panel.copy()
-    if len(rects) < 10:
-        return False, f"Failed to isolate 10 characters (found {len(rects)})", explain_img
+    if not split_rects:
+        return False, "No characters found", explain_img
         
-    heights = [r[3] for r in rects]
+    largest_temp = sorted(split_rects, key=lambda r: r[2] * r[3], reverse=True)[:5]
+    med_y = np.median([r[1] + r[3]/2 for r in largest_temp])
+    
+    aligned_rects = [r for r in split_rects if abs((r[1] + r[3]/2) - med_y) < 20]
+    
+    expected_chars = 10
+    
+    final_rects = sorted(aligned_rects, key=lambda r: r[2] * r[3], reverse=True)[:expected_chars]
+    final_rects = sorted(final_rects, key=lambda r: r[0])
+    
+    if len(final_rects) < 8:
+        return False, f"Failed to isolate 8-10 characters (found {len(final_rects)})", explain_img
+        
+    heights = [r[3] for r in final_rects]
     increases = 0
     for i in range(1, len(heights)):
-        if heights[i] >= heights[i-1] - 3: # 3px tolerance for noise/artifacts
+        if heights[i] >= heights[i-1] - 3:
             increases += 1
             
-    for r in rects:
+    for r in final_rects:
         x, y, w, h = r
         cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
         
-    passed = (increases == len(heights) - 1) and (len(rects) == 10)
-    return passed, f"Chars: {len(rects)}/10 | Ascend: {increases}/{len(heights)-1}", explain_img
+    passed = (increases >= len(heights) - 2) and (len(final_rects) in [8, 9, 10])
+    return passed, f"Chars: {len(final_rects)}/{expected_chars} | Ascend: {increases}/{len(heights)-1}", explain_img
 
 # =====================================================================
 # ALGORITHM 4: VERTICAL RED SERIAL
@@ -165,8 +184,10 @@ def verify_vertical_red_serial(img, denom):
                     if box_red > 10:
                         rects.append((x, y, w, h))
                         
-    # Top 10 largest by area to exclude background noise/speckles
-    rects = sorted(rects, key=lambda r: r[2] * r[3], reverse=True)[:10]
+    expected_chars = 10
+    
+    # Top expected_chars largest by area to exclude background noise/speckles
+    rects = sorted(rects, key=lambda r: r[2] * r[3], reverse=True)[:expected_chars]
     valid_chars = len(rects)
     
     for r in rects:
@@ -174,13 +195,13 @@ def verify_vertical_red_serial(img, denom):
         cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
             
     if not is_color:
-        passed = valid_chars == 10
-        return passed, f"B&W Scan: {valid_chars}/10 chars", explain_img
+        passed = valid_chars in [8, 9, 10]
+        return passed, f"B&W Scan: {valid_chars}/{expected_chars} chars", explain_img
     
     red_pixels = cv2.countNonZero(red_mask)
-    passed = (red_pixels > 150) and (valid_chars == 10)
+    passed = (red_pixels > 150) and (valid_chars in [8, 9, 10])
     
-    return passed, f"Red density: {red_pixels} | Chars: {valid_chars}/10", explain_img
+    return passed, f"Red density: {red_pixels} | Chars: {valid_chars}/{expected_chars}", explain_img
 
 # =====================================================================
 # ALGORITHM 5: STARCHROME SECURITY THREAD
