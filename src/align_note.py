@@ -36,9 +36,9 @@ def _get_reference(denom):
     # We must use the exact source images from which the feature templates were cropped
     # to ensure homography perfectly aligns the features to the templates.
     if denom == 'LKR_1000':
-        source_img = 'Scanned_20260608-1322-01.jpg'
+        source_img = '1000_G1.jpg'
     elif denom == 'LKR_5000':
-        source_img = 'Scanned_20260608-1326-01.jpg'
+        source_img = '5000_G1.jpg'
     else:
         source_img = f'{denom}_s4.jpg' if denom == '500' else f'{denom}_s2.jpg'
     

@@ -8,7 +8,7 @@ import numpy as np
 PROGRAMMATIC_COORDS = {
     'LKR_1000': {
         'blind_dots': (40, 110, 82, 310),
-        'asymmetric_serial': (76, 138, 280, 191),
+        'asymmetric_serial': (75, 120, 290, 200),
         'vertical_red_serial': (803, 120, 868, 398),
         'security_thread': (425, 42, 530, 486),
         'edge_lines': (1051, 192, 1103, 338)
@@ -48,9 +48,16 @@ def verify_blind_dots(img, denom):
         if 50 < area < 500: # Valid dot size (loosened for smaller LKR 5000 dots)
             x, y, w, h = cv2.boundingRect(c)
             aspect_ratio = float(w) / h
-            if 0.7 < aspect_ratio < 1.4:
-                dot_count += 1
+            if 0.5 < aspect_ratio < 1.6:
                 valid_contours.append(c)
+                
+    # Filter out contours that are not vertically aligned with the majority
+    if valid_contours:
+        centers_x = [cv2.boundingRect(c)[0] + cv2.boundingRect(c)[2]/2 for c in valid_contours]
+        median_x = np.median(centers_x)
+        aligned_contours = [c for i, c in enumerate(valid_contours) if abs(centers_x[i] - median_x) < 15]
+        valid_contours = aligned_contours
+        dot_count = len(valid_contours)
             
     explain_img = left_edge.copy()
     cv2.drawContours(explain_img, valid_contours, -1, (0, 255, 0), 2)
@@ -86,27 +93,31 @@ def verify_asymmetric_serial(img, denom):
         x, y, w, h = cv2.boundingRect(c)
         if w >= 2 and h >= 6 and (w * h) > 15:
             aspect_ratio = float(w) / h
-            if 0.15 < aspect_ratio < 1.3:
+            if 0.15 < aspect_ratio < 2.0:
                 if x > 2 and (x + w) < (panel_width - 2):
                     rects.append((x, y, w, h))
             
+    # Filter out noise by taking the 10 largest rectangles (characters)
+    rects = sorted(rects, key=lambda r: r[2] * r[3], reverse=True)[:10]
+    
+    # Sort left-to-right
     rects = sorted(rects, key=lambda r: r[0])
     
     explain_img = panel.copy()
-    if len(rects) < 5:
-        return False, "Failed to isolate characters", explain_img
+    if len(rects) < 10:
+        return False, f"Failed to isolate 10 characters (found {len(rects)})", explain_img
         
     heights = [r[3] for r in rects]
     increases = 0
     for i in range(1, len(heights)):
-        if heights[i] >= heights[i-1] - 2: # 2px tolerance for noise
+        if heights[i] >= heights[i-1] - 3: # 3px tolerance for noise/artifacts
             increases += 1
             
     for r in rects:
         x, y, w, h = r
         cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
         
-    passed = (increases >= len(heights) - 2) and (len(rects) == 10)
+    passed = (increases == len(heights) - 1) and (len(rects) == 10)
     return passed, f"Chars: {len(rects)}/10 | Ascend: {increases}/{len(heights)-1}", explain_img
 
 # =====================================================================
@@ -143,16 +154,24 @@ def verify_vertical_red_serial(img, denom):
     valid_chars = 0
     panel_width = panel.shape[1]
     
+    rects = []
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        if w >= 2 and h >= 6 and (w * h) > 15:
+        if w >= 3 and h >= 6 and (w * h) > 20: # Slightly stricter area filter
             aspect_ratio = float(w) / h
-            if 0.15 < aspect_ratio < 1.3:
+            if 0.15 < aspect_ratio < 1.5:
                 if x > 0 and (x + w) < panel_width:
                     box_red = cv2.countNonZero(red_mask[y:y+h, x:x+w]) if is_color else 999
                     if box_red > 10:
-                        valid_chars += 1
-                        cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                        rects.append((x, y, w, h))
+                        
+    # Top 10 largest by area to exclude background noise/speckles
+    rects = sorted(rects, key=lambda r: r[2] * r[3], reverse=True)[:10]
+    valid_chars = len(rects)
+    
+    for r in rects:
+        x, y, w, h = r
+        cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
             
     if not is_color:
         passed = valid_chars == 10
@@ -238,7 +257,7 @@ def verify_security_thread(img, denom):
     valid_rects = []
     explain_img = panel.copy()
     for rx, ry, rw, rh in raw_rects:
-        if rw > 10 and rh > 20:
+        if rw > 10 and rh >= 10:
             valid_rects.append((rx, ry, rw, rh))
             
     max_stacked = 0

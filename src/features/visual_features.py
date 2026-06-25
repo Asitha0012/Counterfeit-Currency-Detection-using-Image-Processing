@@ -9,8 +9,8 @@ LKR_1000_SEARCH_AREAS_PCT = {
     1: (0.008, 0.710, 0.149, 0.988),
     2: (0.012, 0.534, 0.220, 0.988),
     3: (0.162, 0.638, 0.340, 0.948),
-    4: (0.747, 0.166, 0.994, 0.798),
-    5: (0.812, 0.002, 0.946, 0.270),
+    4: (0.760, 0.200, 0.980, 0.750),
+    5: (0.820, 0.020, 0.930, 0.250),
     6: (0.598, 0.788, 0.818, 0.982),
     7: (0.168, 0.318, 0.279, 0.758)
 }
@@ -113,8 +113,8 @@ def verify_visual_feature(img, denom, feature_id):
         th, tw = template.shape[:2]
         extracted_feature = search_img[ty:ty+th, tx:tx+tw]
         
-        # Apply CLAHE strictly to Veto Gates (F1, F7) to fix shadow-induced False Negatives
-        if feature_id in [1, 7]:
+        # Apply CLAHE strictly to Veto Gates (F1, F7) and detail-oriented shapes (F4, F5) to fix shadow-induced False Negatives
+        if feature_id in [1, 4, 5, 7]:
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
             ext_gray = clahe.apply(cv2.cvtColor(extracted_feature, cv2.COLOR_BGR2GRAY))
             tmp_gray = clahe.apply(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY))
@@ -156,32 +156,43 @@ def verify_visual_feature(img, denom, feature_id):
             except cv2.error:
                 pass
             
-    # Scale-Invariant Artistic Motifs (F2, F5)
-    if feature_id in [2, 5]:
+    # Scale-Invariant Artistic Motifs (F2)
+    if feature_id == 2:
         passed = (max_orb_matches > 12) and (max_color_corr > 0.5)
         # Fallback to pure SSIM if the note perfectly matches structure but ORB lost keypoints
         if (max_ssim > 0.40 and best_corr > 0.75) and (max_color_corr > 0.5):
             passed = True
         msg = f"ORB: {max_orb_matches} | Color: {max_color_corr:.2f}"
     
-    # Rigid Spatial Numerals/Text (F3, F4, F6)
-    elif feature_id in [3, 4, 6]:
-        # Strict SSIM checks prevent perspective-warped fakes from passing
-        threshold_ssim = 0.35
+    # Detailed Structural Shapes (F4, F5)
+    elif feature_id in [4, 5]:
+        # Genuine notes had low raw SSIM due to subtle illumination, so we use CLAHE + tuned SSIM
+        threshold_ssim = 0.20
         threshold_tm = 0.50
+        passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
+        msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
+    
+    # Rigid Spatial Numerals/Text (F3, F6)
+    elif feature_id in [3, 6]:
+        if feature_id == 6:
+            threshold_ssim = 0.65  # Higher threshold to ensure blurry fakes fail
+            threshold_tm = 0.65
+        else:
+            threshold_ssim = 0.30
+            threshold_tm = 0.50
         passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
         
     # Structural VETO Gates (F1, F7) - Protected by CLAHE
     elif feature_id == 1: 
-        threshold_ssim = 0.28
+        threshold_ssim = 0.33 # Increased from 0.28 to fail blurry micro-printing fakes, but allow genuine G6
         threshold_tm = 0.40
         passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
         
     elif feature_id == 7: 
         threshold_ssim = 0.20 # Watermarks are faint, CLAHE boosts them but requires lower threshold
-        threshold_tm = 0.20
+        threshold_tm = 0.14 # Decreased to allow faint genuine watermarks on fakes to pass
         passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
         
