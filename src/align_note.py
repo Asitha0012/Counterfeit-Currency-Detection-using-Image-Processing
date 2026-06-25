@@ -235,8 +235,10 @@ def align_note(img, denom):
     # Decompose homography to extract rotation angle (theta)
     theta = np.arctan2(M_scaled[1, 0], M_scaled[0, 0]) * 180 / np.pi
     
-    # If the tilt angle is significant (> 1.5 degrees), apply perspective warp.
-    if abs(theta) > 1.5:
+    # If the tilt angle is significant (> 0.1 degrees), apply perspective warp.
+    # Even a 1-degree rotation causes a 20+ pixel shift at the edge of the note,
+    # completely breaking the coordinate-based feature extraction.
+    if abs(theta) > 0.1:
         # Scale the homography matrix to apply it to the original full-resolution coarse_img!
         # M_orig = M_scaled * S
         S = np.array([

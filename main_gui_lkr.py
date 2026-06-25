@@ -68,14 +68,19 @@ class CurrencyDetectorApp:
         processing_window.title("Processing")
         processing_window.geometry("400x150")
         Label(processing_window, text="Processing! Please wait...", fg='green', font="Verdana 12 bold", pady=30).pack()
-        processing_window.update()
         
         denom_str = 'LKR_1000' if self.option.get() == 1 else 'LKR_5000'
         
-        start_time = time.perf_counter()
-        flat_verdict, robust_verdict, message, score, feature_statuses, feature_images = analyze_lkr_note(self.image_path, denom_str)
-        elapsed_time_ms = (time.perf_counter() - start_time) * 1000
-        
+        def worker():
+            start_time = time.perf_counter()
+            flat_verdict, robust_verdict, message, score, feature_statuses, feature_images = analyze_lkr_note(self.image_path, denom_str)
+            elapsed_time_ms = (time.perf_counter() - start_time) * 1000
+            
+            self.root.after(0, lambda: self.on_processing_complete(processing_window, flat_verdict, robust_verdict, message, feature_statuses, feature_images, elapsed_time_ms))
+            
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_processing_complete(self, processing_window, flat_verdict, robust_verdict, message, feature_statuses, feature_images, elapsed_time_ms):
         processing_window.destroy()
         self.show_results(flat_verdict, robust_verdict, message, feature_statuses, feature_images, elapsed_time_ms)
 
