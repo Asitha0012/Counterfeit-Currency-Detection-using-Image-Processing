@@ -27,7 +27,7 @@ class CurrencyDetectorApp:
         main_frame.pack(fill=BOTH, expand=True)
 
         Label(master=main_frame, text="SRI LANKA CURRENCY DETECTION SYSTEM", fg='dark blue', font="Verdana 28 bold").pack()
-        Label(master=main_frame, text="This system analyzes LKR 1000 and 5000 using advanced ORB + SSIM and custom Programmatic math.", fg='dark red', font="Verdana 12").pack()
+        Label(master=main_frame, text="This system analyzes LKR 500, 1000 and 5000 using advanced ORB + SSIM and custom Programmatic math.", fg='dark red', font="Verdana 12").pack()
 
         # Canvas for showing the uploaded image
         self.canvas_img = Canvas(master=main_frame, width=500, height=250, bg='white', relief=SUNKEN, borderwidth=2)
@@ -39,6 +39,7 @@ class CurrencyDetectorApp:
         radio_frame = Frame(main_frame)
         radio_frame.pack(pady=5)
         
+        Radiobutton(master=radio_frame, text="LKR 500", variable=self.option, value=3).pack(side=LEFT, padx=10)
         Radiobutton(master=radio_frame, text="LKR 1000", variable=self.option, value=1).pack(side=LEFT, padx=10)
         Radiobutton(master=radio_frame, text="LKR 5000", variable=self.option, value=2).pack(side=LEFT, padx=10)
 
@@ -69,7 +70,13 @@ class CurrencyDetectorApp:
         processing_window.geometry("400x150")
         Label(processing_window, text="Processing! Please wait...", fg='green', font="Verdana 12 bold", pady=30).pack()
         
-        denom_str = 'LKR_1000' if self.option.get() == 1 else 'LKR_5000'
+        val = self.option.get()
+        if val == 1:
+            denom_str = 'LKR_1000'
+        elif val == 2:
+            denom_str = 'LKR_5000'
+        else:
+            denom_str = 'LKR_500'
         
         def worker():
             start_time = time.perf_counter()
@@ -122,7 +129,10 @@ class CurrencyDetectorApp:
         # Input image
         c_input = Canvas(master=sub_frame2, width=675, height=300)
         c_input.pack()
-        denom_str = 'LKR_1000' if self.option.get() == 1 else 'LKR_5000'
+        val = self.option.get()
+        if val == 1: denom_str = 'LKR_1000'
+        elif val == 2: denom_str = 'LKR_5000'
+        else: denom_str = 'LKR_500'
         img_inp = cv2.imread(self.image_path)
         img_inp = align_note(img_inp, denom_str)
         img_inp = cv2.cvtColor(img_inp, cv2.COLOR_BGR2RGB)

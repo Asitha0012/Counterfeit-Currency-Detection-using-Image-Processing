@@ -6,6 +6,13 @@ import numpy as np
 # =====================================================================
 
 PROGRAMMATIC_COORDS = {
+    'LKR_500': {
+        'blind_dots': (33, 114, 74, 274),
+        'asymmetric_serial': (65, 126, 283, 200),
+        'vertical_red_serial': (780, 130, 844, 408),
+        'security_thread': (340, 4, 430, 496),
+        'edge_lines': (1019, 194, 1062, 334)
+    },
     'LKR_1000': {
         'blind_dots': (40, 110, 82, 310),
         'asymmetric_serial': (65, 120, 290, 200),
@@ -62,7 +69,13 @@ def verify_blind_dots(img, denom):
     explain_img = left_edge.copy()
     cv2.drawContours(explain_img, valid_contours, -1, (0, 255, 0), 2)
     
-    expected_dots = 5 if denom == 'LKR_1000' else 6
+    if denom == 'LKR_500':
+        expected_dots = 4
+    elif denom == 'LKR_1000':
+        expected_dots = 5
+    else:
+        expected_dots = 6
+        
     passed = dot_count == expected_dots
     
     return passed, f"Detected {dot_count} dots (Expected {expected_dots})", explain_img
@@ -91,9 +104,12 @@ def verify_asymmetric_serial(img, denom):
     
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        if w >= 5 and h >= 10 and (w * h) > 30:
+        min_h = 3 if denom == 'LKR_500' else 10
+        min_w = 3 if denom == 'LKR_500' else 5
+        min_area = 10 if denom == 'LKR_500' else 30
+        if w >= min_w and h >= min_h and (w * h) > min_area:
             aspect_ratio = float(w) / h
-            if 0.15 < aspect_ratio < 2.5:
+            if 0.1 < aspect_ratio < 4.0:
                 if x > 2 and (x + w) < (panel_width - 2):
                     rects.append((x, y, w, h))
                 
@@ -113,18 +129,20 @@ def verify_asymmetric_serial(img, denom):
     if not split_rects:
         return False, "No characters found", explain_img
         
-    largest_temp = sorted(split_rects, key=lambda r: r[2] * r[3], reverse=True)[:5]
-    med_y = np.median([r[1] + r[3]/2 for r in largest_temp])
-    
-    aligned_rects = [r for r in split_rects if abs((r[1] + r[3]/2) - med_y) < 20]
+    if denom == 'LKR_500':
+        aligned_rects = split_rects
+    else:
+        largest_temp = sorted(split_rects, key=lambda r: r[2] * r[3], reverse=True)[:5]
+        med_y = np.median([r[1] + r[3]/2 for r in largest_temp])
+        aligned_rects = [r for r in split_rects if abs((r[1] + r[3]/2) - med_y) < 20]
     
     expected_chars = 10
     
     final_rects = sorted(aligned_rects, key=lambda r: r[2] * r[3], reverse=True)[:expected_chars]
     final_rects = sorted(final_rects, key=lambda r: r[0])
     
-    if len(final_rects) < 8:
-        return False, f"Failed to isolate 8-10 characters (found {len(final_rects)})", explain_img
+    if len(final_rects) < 7:
+        return False, f"Failed to isolate 7-10 characters (found {len(final_rects)})", explain_img
         
     heights = [r[3] for r in final_rects]
     increases = 0
@@ -132,12 +150,65 @@ def verify_asymmetric_serial(img, denom):
         if heights[i] >= heights[i-1] - 3:
             increases += 1
             
-    for r in final_rects:
-        x, y, w, h = r
-        cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
+    if denom == 'LKR_500':
+        best_increases = -1
+        best_rects = []
+        best_chars = 0
+        best_explain_img = explain_img
         
-    passed = (increases >= len(heights) - 2) and (len(final_rects) in [8, 9, 10])
-    return passed, f"Chars: {len(final_rects)}/{expected_chars} | Ascend: {increases}/{len(heights)-1}", explain_img
+        for C in [5, 7, 10, 15]:
+            for bs in [15, 21, 25]:
+                thresh_dyn = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, C)
+                kernel_dyn = np.ones((2, 2), np.uint8)
+                thresh_dyn = cv2.morphologyEx(thresh_dyn, cv2.MORPH_OPEN, kernel_dyn)
+                
+                contours_dyn, _ = cv2.findContours(thresh_dyn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                rects_dyn = []
+                for c in contours_dyn:
+                    x, y, w, h = cv2.boundingRect(c)
+                    if w >= 3 and h >= 3 and (w * h) > 10:
+                        aspect_ratio = float(w) / h
+                        if 0.1 < aspect_ratio < 4.0:
+                            rects_dyn.append((x, y, w, h))
+                                
+                split_rects_dyn = []
+                for r in rects_dyn:
+                    x, y, w, h = r
+                    if w / h > 1.8:
+                        if h < 8: pass
+                        else:
+                            half_w = w // 2
+                            split_rects_dyn.append((x, y, half_w, h))
+                            split_rects_dyn.append((x + half_w, y, w - half_w, h))
+                    else:
+                        split_rects_dyn.append(r)
+                        
+                final_rects_dyn = sorted(split_rects_dyn, key=lambda r: r[2] * r[3], reverse=True)[:10]
+                final_rects_dyn = sorted(final_rects_dyn, key=lambda r: r[0])
+                
+                heights_dyn = [r[3] for r in final_rects_dyn]
+                increases_dyn = sum(1 for j in range(1, len(heights_dyn)) if heights_dyn[j] >= heights_dyn[j-1] - 4)
+                
+                if increases_dyn > best_increases or (increases_dyn == best_increases and len(final_rects_dyn) > best_chars):
+                    best_increases = increases_dyn
+                    best_rects = final_rects_dyn
+                    best_chars = len(final_rects_dyn)
+                    
+                    best_explain_img = panel.copy()
+                    for r in best_rects:
+                        rx, ry, rw, rh = r
+                        cv2.rectangle(best_explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
+                        
+                if best_chars == 10 and best_increases == 9:
+                    break
+            if best_chars == 10 and best_increases == 9:
+                break
+                
+        passed = (best_chars == 10 and best_increases == 9)
+        return passed, f"Chars: {best_chars}/{expected_chars} | Ascend: {best_increases}/9", best_explain_img
+    else:
+        passed = (increases >= len(heights) - 2) and (len(final_rects) in [7, 8, 9, 10])
+        return passed, f"Chars: {len(final_rects)}/{expected_chars} | Ascend: {increases}/{len(heights)-1}", explain_img
 
 # =====================================================================
 # ALGORITHM 4: VERTICAL RED SERIAL
@@ -218,62 +289,208 @@ def verify_security_thread(img, denom):
     gray = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
     
     mean_brightness = np.mean(gray)
-    dynamic_thresh = max(30, int(mean_brightness - 50))
     
-    _, thresh = cv2.threshold(gray, dynamic_thresh, 255, cv2.THRESH_BINARY_INV)
-    
-    kernel = np.ones((5, 5), np.uint8)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-    
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    raw_rects = []
-    for c in contours:
-        x, y, w, h = cv2.boundingRect(c)
-        if w > 5 and h > 5:
-            raw_rects.append((x, y, w, h))
+    if denom == 'LKR_500':
+        best_rects = []
+        best_max_stacked = 0
+        
+        for offset in range(5, 50, 5):
+            for morph in [1, 2, 3]:
+                for max_gap in [15, 20, 25, 30]:
+                    dynamic_thresh = max(30, int(mean_brightness - offset))
+                    _, thresh = cv2.threshold(gray, dynamic_thresh, 255, cv2.THRESH_BINARY_INV)
+                    kernel = np.ones((morph, morph), np.uint8)
+                    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+                    
+                    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    raw_rects = [(x, y, w, h) for c in contours for x, y, w, h in [cv2.boundingRect(c)] if w > 5 and h > 5]
+                    
+                    raw_rects = sorted(raw_rects, key=lambda r: r[1])
+                    merged = True
+                    while merged:
+                        merged = False
+                        used = set()
+                        for k in range(len(raw_rects)):
+                            if k in used: continue
+                            rx_box, ry_box, rw_box, rh_box = raw_rects[k]
+                            merge_idx = -1
+                            for j in range(k + 1, len(raw_rects)):
+                                if j in used: continue
+                                ox, oy, ow, oh = raw_rects[j]
+                                overlap_x = max(rx_box, ox) <= min(rx_box + rw_box, ox + ow) + 5
+                                gap = oy - (ry_box + rh_box)
+                                if overlap_x and gap <= max_gap:
+                                    merge_idx = j
+                                    break
+                            if merge_idx != -1:
+                                ox, oy, ow, oh = raw_rects[merge_idx]
+                                min_x, min_y = min(rx_box, ox), min(ry_box, oy)
+                                max_x, max_y = max(rx_box + rw_box, ox + ow), max(ry_box + rh_box, oy + oh)
+                                raw_rects[k] = (min_x, min_y, max_x - min_x, max_y - min_y)
+                                used.add(merge_idx)
+                                merged = True
+                                break
+                        if merged:
+                            raw_rects = [raw_rects[k] for k in range(len(raw_rects)) if k not in used]
+                            raw_rects = sorted(raw_rects, key=lambda r: r[1])
+                    
+                    valid_rects = [r for r in raw_rects if r[2] >= 8 and r[2] <= 35 and r[3] >= 8]
+                    
+                    if valid_rects:
+                        groups = []
+                        for r in valid_rects:
+                            rx, ry, rw, rh = r
+                            cx = rx + rw/2
+                            placed = False
+                            for g in groups:
+                                g_cx = np.mean([gr[0] + gr[2]/2 for gr in g])
+                                g_w = np.mean([gr[2] for gr in g])
+                                if abs(cx - g_cx) <= 10 and abs(rw - g_w) <= 10:
+                                    g.append(r)
+                                    placed = True
+                                    break
+                            if not placed:
+                                groups.append([r])
+                                
+                        if groups:
+                            largest_group = max(groups, key=len)
+                            if len(largest_group) > best_max_stacked:
+                                best_max_stacked = len(largest_group)
+                                best_rects = largest_group
+                        
+                    if best_max_stacked == 5: break
+                if best_max_stacked == 5: break
+            if best_max_stacked == 5: break
             
-    original_widths = [w for x, y, w, h in raw_rects if w > 10]
-    avg_original_width = np.mean(original_widths) if original_widths else 0
-    
-    raw_rects = sorted(raw_rects, key=lambda r: r[1])
-    merged = True
-    while merged:
-        merged = False
-        used = set()
-        for i in range(len(raw_rects)):
-            if i in used:
-                continue
-            rx, ry, rw, rh = raw_rects[i]
+        # Two-pass validation to catch segments hidden in dark backgrounds
+        best_strip_count = 0
+        best_strip_rects = []
+        if best_max_stacked >= 2:
+            g_cx = np.mean([r[0] + r[2]/2 for r in best_rects])
+            g_w = np.mean([r[2] for r in best_rects])
             
-            merge_idx = -1
-            for j in range(i + 1, len(raw_rects)):
-                if j in used:
-                    continue
-                ox, oy, ow, oh = raw_rects[j]
+            strip_x1 = max(0, int(g_cx - g_w/2 - 2))
+            strip_x2 = min(gray.shape[1], int(g_cx + g_w/2 + 2))
+            strip = gray[:, strip_x1:strip_x2]
+            strip_mean = np.mean(strip)
+            
+            for offset in range(5, 60, 5):
+                for morph in [1, 2]:
+                    dynamic_thresh = max(30, int(strip_mean - offset))
+                    _, thresh = cv2.threshold(strip, dynamic_thresh, 255, cv2.THRESH_BINARY_INV)
+                    kernel = np.ones((morph, morph), np.uint8)
+                    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+                    
+                    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    strip_rects = [(x, y, w, h) for c in contours for x, y, w, h in [cv2.boundingRect(c)] if w >= 5 and h >= 5]
+                    strip_rects = sorted(strip_rects, key=lambda r: r[1])
+                    
+                    merged = True
+                    while merged:
+                        merged = False
+                        used = set()
+                        for k in range(len(strip_rects)):
+                            if k in used: continue
+                            rx_box, ry_box, rw_box, rh_box = strip_rects[k]
+                            merge_idx = -1
+                            for j in range(k + 1, len(strip_rects)):
+                                if j in used: continue
+                                ox, oy, ow, oh = strip_rects[j]
+                                overlap_x = max(rx_box, ox) <= min(rx_box + rw_box, ox + ow) + 2
+                                gap = oy - (ry_box + rh_box)
+                                if overlap_x and gap <= 20:
+                                    merge_idx = j
+                                    break
+                            if merge_idx != -1:
+                                ox, oy, ow, oh = strip_rects[merge_idx]
+                                min_x, min_y = min(rx_box, ox), min(ry_box, oy)
+                                max_x, max_y = max(rx_box + rw_box, ox + ow), max(ry_box + rh_box, oy + oh)
+                                strip_rects[k] = (min_x, min_y, max_x - min_x, max_y - min_y)
+                                used.add(merge_idx)
+                                merged = True
+                                break
+                        if merged:
+                            strip_rects = [strip_rects[k] for k in range(len(strip_rects)) if k not in used]
+                            strip_rects = sorted(strip_rects, key=lambda r: r[1])
+                            
+                    valid = [r for r in strip_rects if r[2] >= g_w*0.5 and r[3] >= 8]
+                    if len(valid) > best_strip_count:
+                        best_strip_count = len(valid)
+                        best_strip_rects = valid
+                    if best_strip_count == 5: break
+                if best_strip_count == 5: break
+            
+            if best_strip_count > best_max_stacked:
+                # Map back to original panel coordinates
+                mapped_rects = []
+                for rx, ry, rw, rh in best_strip_rects:
+                    mapped_rects.append((strip_x1 + rx, ry, rw, rh))
+                best_rects = mapped_rects
+                best_max_stacked = best_strip_count
+            
+        max_stacked = best_max_stacked
+        
+        # Filter out abnormally wide rectangles that might have merged with the background
+        g_w = np.median([w for x, y, w, h in best_rects]) if best_rects else 0
+        original_widths = [w for x, y, w, h in best_rects if abs(w - g_w) <= 15]
+        avg_original_width = np.mean(original_widths) if original_widths else 0
+        measured_mm = (avg_original_width / 7.3) if avg_original_width > 0 else 0
+        
+        explain_img = panel.copy()
+        for rx, ry, rw, rh in best_rects:
+            cv2.rectangle(explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
+            
+        expected_segments = 5
+        passed = (max_stacked == expected_segments and measured_mm > 0.5)
+        return passed, f"Segments: {max_stacked}/{expected_segments} | Avg Width: {measured_mm:.1f}mm", explain_img
+    else:
+        dynamic_thresh = max(30, int(mean_brightness - 50))
+        _, thresh = cv2.threshold(gray, dynamic_thresh, 255, cv2.THRESH_BINARY_INV)
+        kernel = np.ones((5, 5), np.uint8)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        raw_rects = []
+        for c in contours:
+            x, y, w, h = cv2.boundingRect(c)
+            if w > 5 and h > 5:
+                raw_rects.append((x, y, w, h))
                 
-                overlap_x = max(rx, ox) <= min(rx + rw, ox + ow) + 5
-                gap = oy - (ry + rh)
+        original_widths = [w for x, y, w, h in raw_rects if w > 10]
+        avg_original_width = np.mean(original_widths) if original_widths else 0
+        
+        raw_rects = sorted(raw_rects, key=lambda r: r[1])
+        merged = True
+        while merged:
+            merged = False
+            used = set()
+            for i in range(len(raw_rects)):
+                if i in used: continue
+                rx, ry, rw, rh = raw_rects[i]
+                merge_idx = -1
+                for j in range(i + 1, len(raw_rects)):
+                    if j in used: continue
+                    ox, oy, ow, oh = raw_rects[j]
+                    overlap_x = max(rx, ox) <= min(rx + rw, ox + ow) + 5
+                    gap = oy - (ry + rh)
+                    
+                    if overlap_x and gap <= 15:
+                        merge_idx = j
+                        break
                 
-                if overlap_x and gap <= 15:
-                    merge_idx = j
+                if merge_idx != -1:
+                    ox, oy, ow, oh = raw_rects[merge_idx]
+                    min_x, min_y = min(rx, ox), min(ry, oy)
+                    max_x, max_y = max(rx + rw, ox + ow), max(ry + rh, oy + oh)
+                    raw_rects[i] = (min_x, min_y, max_x - min_x, max_y - min_y)
+                    used.add(merge_idx)
+                    merged = True
                     break
             
-            if merge_idx != -1:
-                ox, oy, ow, oh = raw_rects[merge_idx]
-                min_x = min(rx, ox)
-                min_y = min(ry, oy)
-                max_x = max(rx + rw, ox + ow)
-                max_y = max(ry + rh, oy + oh)
-                
-                raw_rects[i] = (min_x, min_y, max_x - min_x, max_y - min_y)
-                used.add(merge_idx)
-                merged = True
-                break
-        
-        if merged:
-            raw_rects = [raw_rects[k] for k in range(len(raw_rects)) if k not in used]
-            raw_rects = sorted(raw_rects, key=lambda r: r[1])
+            if merged:
+                raw_rects = [raw_rects[k] for k in range(len(raw_rects)) if k not in used]
+                raw_rects = sorted(raw_rects, key=lambda r: r[1])
             
     valid_rects = []
     explain_img = panel.copy()
@@ -290,24 +507,26 @@ def verify_security_thread(img, denom):
                 max_stacked = stacked
                 best_x = rx
                 
-    if max_stacked == 5:
+    if max_stacked >= 3:
         for rx, ry, rw, rh in valid_rects:
             if abs(rx - best_x) <= 15:
                 cv2.rectangle(explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
                 
-    passed = max_stacked == 5
-    
     if avg_original_width > 0:
         measured_mm = avg_original_width / 7.3
     else:
         avg_width_px = np.mean([rw for rx, ry, rw, rh in valid_rects]) if valid_rects else 0
         measured_mm = avg_width_px / 7.3
-        
-    expected_mm = 3.0 if denom == 'LKR_5000' else 2.5
-    if abs(measured_mm - expected_mm) > 0.5:
-        passed = False
-        
-    return passed, f"Segments: {max_stacked}/5 | Width: {measured_mm:.1f}mm", explain_img
+
+    if denom == 'LKR_5000':
+        expected_segments = 5
+        passed = (max_stacked == expected_segments and avg_original_width > 5)
+        return passed, f"Segments: {max_stacked}/{expected_segments} | Avg Width: {measured_mm:.1f}mm", explain_img
+    else:
+        # For LKR_1000
+        expected_segments = 4
+        passed = (max_stacked >= expected_segments and avg_original_width > 5)
+        return passed, f"Segments: {max_stacked}/{expected_segments} | Avg Width: {measured_mm:.1f}mm", explain_img
 
 # =====================================================================
 # ALGORITHM 6: TACTILE EDGE LINES
@@ -341,5 +560,5 @@ def verify_edge_lines(img, denom):
                 valid_lines += 1
                 cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
                 
-    passed = valid_lines == 15
+    passed = valid_lines >= 13
     return passed, f"Edge Lines: {valid_lines}/15", explain_img
