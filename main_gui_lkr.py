@@ -58,9 +58,11 @@ class CurrencyDetectorApp:
             img = cv2.imread(self.image_path)
             if img is not None:
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                img = cv2.resize(img, (500, 250))
-                self.photo = ImageTk.PhotoImage(image=PIL_Image.fromarray(img))
-                self.canvas_img.create_image(0, 0, image=self.photo, anchor=NW)
+                pil_img = PIL_Image.fromarray(img)
+                pil_img.thumbnail((500, 250), PIL_Image.Resampling.LANCZOS)
+                self.photo = ImageTk.PhotoImage(image=pil_img)
+                self.canvas_img.delete("all")
+                self.canvas_img.create_image(250, 125, image=self.photo, anchor=CENTER)
 
     def process_image(self):
         if not self.image_path: return
@@ -136,10 +138,12 @@ class CurrencyDetectorApp:
         img_inp = cv2.imread(self.image_path)
         img_inp = align_note(img_inp, denom_str)
         img_inp = cv2.cvtColor(img_inp, cv2.COLOR_BGR2RGB)
-        img_inp = cv2.resize(img_inp, (675, 300))
-        img_inp = ImageTk.PhotoImage(PIL_Image.fromarray(img_inp))
+        pil_img = PIL_Image.fromarray(img_inp)
+        pil_img.thumbnail((675, 300), PIL_Image.Resampling.LANCZOS)
+        img_inp = ImageTk.PhotoImage(pil_img)
         c_input.image = img_inp
-        c_input.create_image(0, 0, anchor=NW, image=img_inp)
+        c_input.delete("all")
+        c_input.create_image(337, 150, anchor=CENTER, image=img_inp)
         
         # Grid of features
         feature_names = [

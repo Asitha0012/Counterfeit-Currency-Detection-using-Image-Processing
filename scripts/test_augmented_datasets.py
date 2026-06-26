@@ -8,6 +8,13 @@ sys.path.append(os.path.join(base_dir, 'src'))
 from evaluate_lkr import analyze_lkr_note
 from evaluate_matrices import calculate_metrics, print_confusion_matrix
 
+import concurrent.futures
+
+def process_single_image(args):
+    img_path, denom, expected_result = args
+    flat_verdict, robust_verdict, message, score, feature_statuses, feature_images = analyze_lkr_note(img_path, denom)
+    return img_path, robust_verdict, message
+
 def test_folder(folder_path, denom, expected_result):
     image_paths = glob.glob(os.path.join(folder_path, '*.jpg')) + glob.glob(os.path.join(folder_path, '*.png'))
     if not image_paths:
@@ -17,19 +24,20 @@ def test_folder(folder_path, denom, expected_result):
     
     y_true = []
     y_pred = []
-
-    for img_path in image_paths:
-        flat_verdict, robust_verdict, message, score, feature_statuses, feature_images = analyze_lkr_note(img_path, denom)
-        
-        true_label = "Genuine" if expected_result else "Fake"
-        pred_label = "Genuine" if robust_verdict else "Fake"
-        
-        y_true.append(true_label)
-        y_pred.append(pred_label)
-        
-        if robust_verdict != expected_result:
-            print(f"  [FAILED] {os.path.basename(img_path)}: {message}")
+    
+    args_list = [(path, denom, expected_result) for path in image_paths]
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
+        for img_path, robust_verdict, message in executor.map(process_single_image, args_list):
+            true_label = "Genuine" if expected_result else "Fake"
+            pred_label = "Genuine" if robust_verdict else "Fake"
             
+            y_true.append(true_label)
+            y_pred.append(pred_label)
+            
+            if robust_verdict != expected_result:
+                print(f"  [FAILED] {os.path.basename(img_path)}: {message}")
+                
     accuracy = sum(1 for t, p in zip(y_true, y_pred) if t == p) / len(image_paths) * 100
     print(f"Result: {accuracy:.1f}% behaved exactly as expected.")
             
@@ -42,6 +50,9 @@ if __name__ == "__main__":
     y_pred_all = []
     
     print("\n" + "="*40 + "\nTESTING GENUINE NOTES (Should Pass)\n" + "="*40)
+    yt, yp = test_folder(os.path.join(augmented_base, "Genuine", "LKR_500"), "LKR_500", expected_result=True)
+    y_true_all.extend(yt); y_pred_all.extend(yp)
+    
     yt, yp = test_folder(os.path.join(augmented_base, "Genuine", "LKR_1000"), "LKR_1000", expected_result=True)
     y_true_all.extend(yt); y_pred_all.extend(yp)
     
@@ -49,6 +60,9 @@ if __name__ == "__main__":
     y_true_all.extend(yt); y_pred_all.extend(yp)
     
     print("\n" + "="*40 + "\nTESTING FAKE NOTES (Should Fail)\n" + "="*40)
+    yt, yp = test_folder(os.path.join(augmented_base, "Fake", "LKR_500"), "LKR_500", expected_result=False)
+    y_true_all.extend(yt); y_pred_all.extend(yp)
+    
     yt, yp = test_folder(os.path.join(augmented_base, "Fake", "LKR_1000"), "LKR_1000", expected_result=False)
     y_true_all.extend(yt); y_pred_all.extend(yp)
     

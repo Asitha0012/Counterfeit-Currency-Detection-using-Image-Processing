@@ -29,36 +29,26 @@ def generate_datasets(genuine_dir, counterfeit_dir, base_output_dir, denom):
     # --- 1. Process Genuine Notes ---
     gen_paths = glob.glob(os.path.join(genuine_dir, '*.jpg')) + glob.glob(os.path.join(genuine_dir, '*.png'))
     if gen_paths:
-        # Add 1 to ensure we reach 100, then break exactly at 100
-        images_per_gen = (100 // len(gen_paths)) + 1
-        total_gen = 0
         for img_path in gen_paths:
             filename = os.path.basename(img_path)
             name, ext = os.path.splitext(filename)
             image = cv2.imread(img_path)
             if image is None: continue
             
-            for i in range(images_per_gen):
-                if total_gen >= 100: break
+            for i in range(50):
                 cv2.imwrite(os.path.join(gen_out_dir, f"{name}_gen_{i+1}{ext}"), augment_light(image))
-                total_gen += 1
 
     # --- 2. Process ACTUAL Counterfeit Notes ---
     fake_paths = glob.glob(os.path.join(counterfeit_dir, '*.jpg')) + glob.glob(os.path.join(counterfeit_dir, '*.png')) + glob.glob(os.path.join(counterfeit_dir, '*.jpeg'))
     if fake_paths:
-        # Add 1 to ensure we reach 100, then break exactly at 100
-        images_per_fake = (100 // len(fake_paths)) + 1
-        total_fake = 0
         for img_path in fake_paths:
             filename = os.path.basename(img_path)
             name, ext = os.path.splitext(filename)
             image = cv2.imread(img_path)
             if image is None: continue
             
-            for i in range(images_per_fake):
-                if total_fake >= 100: break
+            for i in range(50):
                 cv2.imwrite(os.path.join(fake_out_dir, f"{name}_fake_{i+1}.jpg"), augment_light(image))
-                total_fake += 1
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +58,11 @@ if __name__ == "__main__":
     if os.path.exists(output_base):
         shutil.rmtree(output_base)
         
+    print("--- Generating LKR 500 Datasets using REAL Counterfeits ---")
+    gen_500 = os.path.join(base_dir, "data", "genuine", "LKR_500")
+    fake_500 = os.path.join(base_dir, "data", "counterfeit", "LKR_500")
+    generate_datasets(gen_500, fake_500, output_base, "LKR_500")
+    
     print("--- Generating LKR 1000 Datasets using REAL Counterfeits ---")
     gen_1000 = os.path.join(base_dir, "data", "genuine", "LKR_1000")
     fake_1000 = os.path.join(base_dir, "data", "counterfeit", "LKR_1000")
@@ -78,4 +73,4 @@ if __name__ == "__main__":
     fake_5000 = os.path.join(base_dir, "data", "counterfeit", "LKR_5000")
     generate_datasets(gen_5000, fake_5000, output_base, "LKR_5000")
     
-    print("Done! Generated EXACTLY 100 Genuine and 100 Fake images.")
+    print("Done! Generated EXACTLY 50 augmented images per input note.")
