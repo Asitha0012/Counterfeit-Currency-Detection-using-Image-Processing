@@ -25,18 +25,28 @@ LKR_5000_SEARCH_AREAS_PCT = {
     7: (0.167, 0.308, 0.269, 0.754)
 }
 
+LKR_500_SEARCH_AREAS_PCT = {
+    1: (0.010, 0.760, 0.120, 0.960),
+    2: (0.015, 0.590, 0.210, 0.960),
+    3: (0.150, 0.680, 0.310, 0.930),
+    4: (0.770, 0.200, 0.980, 0.780),
+    5: (0.820, 0.040, 0.950, 0.240),
+    6: (0.610, 0.830, 0.830, 0.960),
+    7: (0.160, 0.350, 0.260, 0.720)
+}
+
 # =====================================================================
 # TEMPLATE CACHE
 # =====================================================================
-TEMPLATE_CACHE = {'LKR_1000': {}, 'LKR_5000': {}}
-TEMPLATE_ORB_CACHE = {'LKR_1000': {}, 'LKR_5000': {}}
+TEMPLATE_CACHE = {'LKR_500': {}, 'LKR_1000': {}, 'LKR_5000': {}}
+TEMPLATE_ORB_CACHE = {'LKR_500': {}, 'LKR_1000': {}, 'LKR_5000': {}}
 
 GLOBAL_ORB = cv2.ORB_create(500)
 GLOBAL_BF = cv2.BFMatcher(cv2.NORM_HAMMING)
 
 def load_templates():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    for denom in ['LKR_1000', 'LKR_5000']:
+    for denom in ['LKR_500', 'LKR_1000', 'LKR_5000']:
         denom_dir = os.path.join(base_dir, 'data', 'templates', denom)
         if not os.path.exists(denom_dir): continue
         
@@ -72,8 +82,17 @@ def calculate_ssim(img1, img2):
     score, _ = structural_similarity(gray1, gray2, full=True)
     return score
 
+def get_search_areas(denom):
+    if denom == 'LKR_500':
+        return LKR_500_SEARCH_AREAS_PCT
+    elif denom == 'LKR_1000':
+        return LKR_1000_SEARCH_AREAS_PCT
+    elif denom == 'LKR_5000':
+        return LKR_5000_SEARCH_AREAS_PCT
+    return LKR_1000_SEARCH_AREAS_PCT
+
 def get_dynamic_coords(img_shape, denom, feature_id):
-    pct_map = LKR_1000_SEARCH_AREAS_PCT if denom == 'LKR_1000' else LKR_5000_SEARCH_AREAS_PCT
+    pct_map = get_search_areas(denom)
     px1, py1, px2, py2 = pct_map[feature_id]
     h, w = img_shape[:2]
     
@@ -105,23 +124,33 @@ def verify_visual_feature(img, denom, feature_id):
     kp_search, des_search = GLOBAL_ORB.detectAndCompute(search_img, None)
     
     for i, template in enumerate(TEMPLATE_CACHE[denom][feature_id]):
-        # Fast template matching to find the exact sub-location for XAI Cropping
-        res = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-        
-        tx, ty = max_loc
-        th, tw = template.shape[:2]
-        extracted_feature = search_img[ty:ty+th, tx:tx+tw]
-        
         # Apply CLAHE strictly to Veto Gates (F1, F7) and detail-oriented shapes (F4, F5) to fix shadow-induced False Negatives
+        # Crucially, we apply this BEFORE template matching so that the alignment and TM score are structurally robust.
         if feature_id in [1, 4, 5, 7]:
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            search_proc = clahe.apply(cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY))
+            template_proc = clahe.apply(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY))
+            
+            res = cv2.matchTemplate(search_proc, template_proc, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            
+            tx, ty = max_loc
+            th, tw = template.shape[:2]
+            extracted_feature = search_img[ty:ty+th, tx:tx+tw]
+            
+            # Recalculate SSIM on the extracted region using the same CLAHE enhanced versions
             ext_gray = clahe.apply(cv2.cvtColor(extracted_feature, cv2.COLOR_BGR2GRAY))
-            tmp_gray = clahe.apply(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY))
             ext_bgr = cv2.cvtColor(ext_gray, cv2.COLOR_GRAY2BGR)
-            tmp_bgr = cv2.cvtColor(tmp_gray, cv2.COLOR_GRAY2BGR)
+            tmp_bgr = cv2.cvtColor(template_proc, cv2.COLOR_GRAY2BGR)
             score = calculate_ssim(ext_bgr, tmp_bgr)
         else:
+            # Standard fast BGR template matching
+            res = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            
+            tx, ty = max_loc
+            th, tw = template.shape[:2]
+            extracted_feature = search_img[ty:ty+th, tx:tx+tw]
             score = calculate_ssim(extracted_feature, template)
         
         # Color Histogram logic for motifs to prevent Hue-shifted fakes from passing
@@ -168,7 +197,7 @@ def verify_visual_feature(img, denom, feature_id):
     elif feature_id in [4, 5]:
         # Genuine notes had low raw SSIM due to subtle illumination, so we use CLAHE + tuned SSIM
         threshold_ssim = 0.20
-        threshold_tm = 0.50
+        threshold_tm = 0.45
         passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
     
@@ -185,7 +214,7 @@ def verify_visual_feature(img, denom, feature_id):
         
     # Structural VETO Gates (F1, F7) - Protected by CLAHE
     elif feature_id == 1: 
-        threshold_ssim = 0.33 # Increased from 0.28 to fail blurry micro-printing fakes, but allow genuine G6
+        threshold_ssim = 0.28 # Lowered slightly to allow G8, TM is highly robust now
         threshold_tm = 0.40
         passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"

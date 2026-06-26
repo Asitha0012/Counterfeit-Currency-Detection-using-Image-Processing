@@ -20,6 +20,7 @@ import os
 STANDARD_DIMS = {
     '500': (1167, 519),   # (width, height)
     '2000': (1165, 455),
+    'LKR_500': (1062, 500),
     'LKR_1000': (1104, 500),
     'LKR_5000': (1141, 500),
 }
@@ -39,8 +40,11 @@ def _get_reference(denom):
         source_img = '1000_G1.jpg'
     elif denom == 'LKR_5000':
         source_img = '5000_G1.jpg'
+    elif denom == 'LKR_500':
+        source_img = '500_G1.jpg'
     else:
-        source_img = f'{denom}_s4.jpg' if denom == '500' else f'{denom}_s2.jpg'
+        # Fallback
+        source_img = '1000_G1.jpg' if denom == '500' else f'{denom}_s2.jpg'
     
     base_dir = os.path.dirname(os.path.dirname(__file__))
     ref_path = os.path.join(base_dir, 'data', 'genuine', denom, source_img)
