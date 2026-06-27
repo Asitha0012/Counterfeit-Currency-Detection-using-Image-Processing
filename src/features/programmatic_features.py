@@ -144,71 +144,88 @@ def verify_asymmetric_serial(img, denom):
     if len(final_rects) < 7:
         return False, f"Failed to isolate 7-10 characters (found {len(final_rects)})", explain_img
         
-    heights = [r[3] for r in final_rects]
+    
     increases = 0
-    for i in range(1, len(heights)):
-        if heights[i] >= heights[i-1] - 3:
-            increases += 1
+    
+    best_increases = -1
+    best_rects = []
+    best_chars = 0
+    best_explain_img = gray.copy()
+    expected_chars = 10
+    
+    for C in [5, 7, 10, 15]:
+        for bs in [15, 21, 25]:
+            thresh_dyn = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, C)
+            kernel_dyn = np.ones((2, 2), np.uint8)
+            # thresh_dyn = cv2.morphologyEx(thresh_dyn, cv2.MORPH_OPEN, kernel_dyn)
             
-    if denom in ['LKR_500', 'LKR_1000']:
-        best_increases = -1
-        best_rects = []
-        best_chars = 0
-        best_explain_img = explain_img
-        
-        for C in [5, 7, 10, 15]:
-            for bs in [15, 21, 25]:
-                thresh_dyn = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, C)
-                kernel_dyn = np.ones((2, 2), np.uint8)
-                thresh_dyn = cv2.morphologyEx(thresh_dyn, cv2.MORPH_OPEN, kernel_dyn)
-                
-                contours_dyn, _ = cv2.findContours(thresh_dyn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                rects_dyn = []
-                for c in contours_dyn:
-                    x, y, w, h = cv2.boundingRect(c)
-                    if w >= 3 and h >= 3 and (w * h) > 10:
-                        aspect_ratio = float(w) / h
-                        if 0.1 < aspect_ratio < 4.0:
-                            rects_dyn.append((x, y, w, h))
-                                
-                split_rects_dyn = []
-                for r in rects_dyn:
-                    x, y, w, h = r
-                    if w / h > 1.8:
-                        if h < 8: pass
-                        else:
-                            half_w = w // 2
-                            split_rects_dyn.append((x, y, half_w, h))
-                            split_rects_dyn.append((x + half_w, y, w - half_w, h))
+            contours_dyn, _ = cv2.findContours(thresh_dyn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            rects_dyn = []
+            for c in contours_dyn:
+                x, y, w, h = cv2.boundingRect(c)
+                if w >= 3 and h >= 6 and (w * h) > 20:
+                    aspect_ratio = float(w) / h
+                    if 0.1 < aspect_ratio < 4.0:
+                        rects_dyn.append((x, y, w, h))
+                            
+            split_rects_dyn = []
+            for r in rects_dyn:
+                x, y, w, h = r
+                if w / h > 1.8:
+                    if h < 8: pass
                     else:
-                        split_rects_dyn.append(r)
-                        
-                final_rects_dyn = sorted(split_rects_dyn, key=lambda r: r[2] * r[3], reverse=True)[:10]
-                final_rects_dyn = sorted(final_rects_dyn, key=lambda r: r[0])
-                
-                heights_dyn = [r[3] for r in final_rects_dyn]
-                increases_dyn = sum(1 for j in range(1, len(heights_dyn)) if heights_dyn[j] >= heights_dyn[j-1] - 4)
-                
-                if increases_dyn > best_increases or (increases_dyn == best_increases and len(final_rects_dyn) > best_chars):
-                    best_increases = increases_dyn
-                    best_rects = final_rects_dyn
-                    best_chars = len(final_rects_dyn)
+                        half_w = w // 2
+                        split_rects_dyn.append((x, y, half_w, h))
+                        split_rects_dyn.append((x + half_w, y, w - half_w, h))
+                else:
+                    split_rects_dyn.append(r)
                     
-                    best_explain_img = panel.copy()
-                    for r in best_rects:
-                        rx, ry, rw, rh = r
+            if denom == 'LKR_5000' and len(split_rects_dyn) > 0:
+                largest_temp = sorted(split_rects_dyn, key=lambda r: r[2] * r[3], reverse=True)[:5]
+                med_y = np.median([r[1] + r[3]/2 for r in largest_temp])
+                split_rects_dyn = [r for r in split_rects_dyn if abs((r[1] + r[3]/2) - med_y) < 22]
+                
+            final_rects_dyn = sorted(split_rects_dyn, key=lambda r: r[2] * r[3], reverse=True)[:10]
+            final_rects_dyn = sorted(final_rects_dyn, key=lambda r: r[0])
+            
+            heights_dyn = [r[3] for r in final_rects_dyn]
+            if denom == 'LKR_5000':
+                increases_dyn = sum(1 for j in range(1, len(heights_dyn)) if heights_dyn[j] >= heights_dyn[j-1] - 6)
+            else:
+                increases_dyn = sum(1 for j in range(1, len(heights_dyn)) if heights_dyn[j] >= heights_dyn[j-1] - 4)
+            
+            if increases_dyn > best_increases or (increases_dyn == best_increases and len(final_rects_dyn) > best_chars):
+                best_increases = increases_dyn
+                best_rects = final_rects_dyn
+                best_chars = len(final_rects_dyn)
+                
+                best_explain_img = panel.copy()
+                gray_panel = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
+                for r in best_rects:
+                    rx, ry, rw, rh = r
+                    
+                    # Refine bounding box to tightly fit the actual character pixels
+                    char_roi = gray_panel[ry:ry+rh, rx:rx+rw]
+                    _, char_thresh = cv2.threshold(char_roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                    char_coords = cv2.findNonZero(char_thresh)
+                    if char_coords is not None:
+                        cx, cy, cw, ch = cv2.boundingRect(char_coords)
+                        cv2.rectangle(best_explain_img, (rx+cx, ry+cy), (rx+cx+cw, ry+cy+ch), (0, 255, 0), 2)
+                    else:
                         cv2.rectangle(best_explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
-                        
-                if best_chars == 10 and best_increases == 9:
-                    break
+                    
             if best_chars == 10 and best_increases == 9:
                 break
-                
+        if best_chars == 10 and best_increases == 9:
+            break
+            
+    if denom == 'LKR_5000':
         passed = (best_chars == 10 and best_increases == 9)
-        return passed, f"Chars: {best_chars}/{expected_chars} | Ascend: {best_increases}/9", best_explain_img
+        return passed, f"Chars: {best_chars}/10 | Ascend: {best_increases}/9", best_explain_img
     else:
-        passed = (increases >= len(heights) - 2) and (len(final_rects) in [7, 8, 9, 10])
-        return passed, f"Chars: {len(final_rects)}/{expected_chars} | Ascend: {increases}/{len(heights)-1}", explain_img
+        # LKR_500 and LKR_1000 original logic
+        passed = (best_chars == 10 and best_increases == 9)
+        return passed, f"Chars: {best_chars}/10 | Ascend: {best_increases}/9", best_explain_img
 
 # =====================================================================
 # ALGORITHM 4: VERTICAL RED SERIAL
@@ -282,20 +299,81 @@ def verify_vertical_red_serial(img, denom):
                                 
             rects_dyn = sorted(rects_dyn, key=lambda r: r[2] * r[3], reverse=True)[:expected_chars]
             
-            if len(rects_dyn) > best_valid_chars:
-                best_valid_chars = len(rects_dyn)
-                best_rects = rects_dyn
-                best_explain_img = panel.copy()
-                for r in best_rects:
-                    rx, ry, rw, rh = r
-                    cv2.rectangle(best_explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
+            if denom == 'LKR_5000':
+                if len(rects_dyn) == 10:
+                    rects_dyn.sort(key=lambda r: r[1]) # Sort by Y
                     
+                    y_horiz = [r[1] for r in rects_dyn[1:4]]
+                    x_horiz = [r[0] for r in rects_dyn[1:4]]
+                    x_vert = [r[0] for r in rects_dyn[4:10]]
+                    
+                    valid = True
+                    if max(y_horiz) - min(y_horiz) > 20: valid = False
+                    if max(x_horiz) - min(x_horiz) < 10: valid = False
+                    if max(x_vert) - min(x_vert) > 30: valid = False
+                    
+                    for i in range(5, 10):
+                        if rects_dyn[i][1] - rects_dyn[i-1][1] < 8:
+                            valid = False
+                            
+                    if valid:
+                        best_valid_chars = 10
+                        best_rects = rects_dyn
+                        best_explain_img = panel.copy()
+                        gray_panel = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
+                        for r in best_rects:
+                            rx, ry, rw, rh = r
+                            char_roi = gray_panel[ry:ry+rh, rx:rx+rw]
+                            _, char_thresh = cv2.threshold(char_roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                            char_coords = cv2.findNonZero(char_thresh)
+                            if char_coords is not None:
+                                cx, cy, cw, ch = cv2.boundingRect(char_coords)
+                                cv2.rectangle(best_explain_img, (rx+cx, ry+cy), (rx+cx+cw, ry+cy+ch), (0, 255, 0), 2)
+                            else:
+                                cv2.rectangle(best_explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
+            else:
+                if len(rects_dyn) > best_valid_chars:
+                    best_valid_chars = len(rects_dyn)
+                    best_rects = rects_dyn
+                    best_explain_img = panel.copy()
+                    gray_panel = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
+                    for r in best_rects:
+                        rx, ry, rw, rh = r
+                        char_roi = gray_panel[ry:ry+rh, rx:rx+rw]
+                        _, char_thresh = cv2.threshold(char_roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                        char_coords = cv2.findNonZero(char_thresh)
+                        if char_coords is not None:
+                            cx, cy, cw, ch = cv2.boundingRect(char_coords)
+                            cv2.rectangle(best_explain_img, (rx+cx, ry+cy), (rx+cx+cw, ry+cy+ch), (0, 255, 0), 2)
+                        else:
+                            cv2.rectangle(best_explain_img, (rx, ry), (rx+rw, ry+rh), (0, 255, 0), 2)
+                        
             if best_valid_chars == expected_chars:
                 break
         if best_valid_chars == expected_chars:
             break
             
-    if denom in ['LKR_500', 'LKR_1000']:
+    if denom == 'LKR_1000':
+        passed = False
+        if best_valid_chars == expected_chars:
+            best_rects_sorted = sorted(best_rects, key=lambda r: r[1])
+            top = [r for r in best_rects_sorted if r[1] < 25]
+            mid = [r for r in best_rects_sorted if 25 <= r[1] < 55]
+            bot = [r for r in best_rects_sorted if r[1] >= 55]
+            
+            if len(top) == 1 and len(mid) == 3 and len(bot) == 6:
+                xs = [r[0] + r[2]/2 for r in bot]
+                if max(xs) - min(xs) < 20: # Vertically aligned
+                    passed = True
+
+        if not is_color:
+            return passed, f"B&W Scan: Struct {'Pass' if passed else 'Fail'} | {best_valid_chars}/{expected_chars}", best_explain_img
+            
+        red_pixels = cv2.countNonZero(red_mask)
+        passed = passed and (red_pixels > 150)
+        return passed, f"Red density: {red_pixels} | Struct {'Pass' if passed else 'Fail'}", best_explain_img
+
+    elif denom == 'LKR_500':
         if not is_color:
             passed = (best_valid_chars == expected_chars)
             return passed, f"B&W Scan: {best_valid_chars}/{expected_chars} chars", best_explain_img
@@ -305,11 +383,11 @@ def verify_vertical_red_serial(img, denom):
         return passed, f"Red density: {red_pixels} | Chars: {best_valid_chars}/{expected_chars}", best_explain_img
     else:
         if not is_color:
-            passed = best_valid_chars in [8, 9, 10]
+            passed = (best_valid_chars == expected_chars)
             return passed, f"B&W Scan: {best_valid_chars}/{expected_chars} chars", best_explain_img
         
         red_pixels = cv2.countNonZero(red_mask)
-        passed = (red_pixels > 150) and (best_valid_chars in [8, 9, 10])
+        passed = (red_pixels > 150) and (best_valid_chars == expected_chars)
         return passed, f"Red density: {red_pixels} | Chars: {best_valid_chars}/{expected_chars}", best_explain_img
 
 # =====================================================================
@@ -617,7 +695,9 @@ def verify_edge_lines(img, denom):
                 valid_lines += 1
                 cv2.rectangle(explain_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
                 
-    if denom == 'LKR_500':
+    if denom == 'LKR_5000':
+        passed = (valid_lines == 15)
+    elif denom == 'LKR_500':
         passed = valid_lines >= 13
     else:
         passed = valid_lines >= 13

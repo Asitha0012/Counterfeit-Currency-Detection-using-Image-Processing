@@ -156,7 +156,11 @@ def verify_visual_feature(img, denom, feature_id):
                 
             ext_bgr = cv2.cvtColor(ext_gray, cv2.COLOR_GRAY2BGR)
             tmp_bgr = cv2.cvtColor(tmp_gray, cv2.COLOR_GRAY2BGR)
-            score = calculate_ssim(ext_bgr, tmp_bgr)
+            
+            # Apply Gaussian blur to suppress noise amplified by CLAHE
+            ext_blur = cv2.GaussianBlur(ext_bgr, (5, 5), 0)
+            tmp_blur = cv2.GaussianBlur(tmp_bgr, (5, 5), 0)
+            score = calculate_ssim(ext_blur, tmp_blur)
         else:
             # Standard fast BGR template matching
             res = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
@@ -229,12 +233,18 @@ def verify_visual_feature(img, denom, feature_id):
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
     
     # Rigid Spatial Numerals/Text (F3, F6)
-    elif feature_id in [3, 6]:
+    elif feature_id == 3:
         # We apply Gaussian Blur before SSIM to suppress halftone noise and reveal true macro structure
-        # We lowered the threshold significantly so that "visually perfect" fake numerals pass 
-        # (as requested by the user), allowing the programmatic features to catch them instead.
         threshold_ssim = 0.60
         threshold_tm = 0.50
+        
+        passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
+        msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
+
+    elif feature_id == 6:
+        # Increased threshold as requested for Value Text
+        threshold_ssim = 0.80
+        threshold_tm = 0.70
         
         passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
