@@ -76,8 +76,8 @@ def calculate_ssim(img1, img2):
     
     img2_resized = cv2.resize(img2, (img1.shape[1], img1.shape[0]))
     
-    gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
-    gray2 = cv2.cvtColor(img2_resized, cv2.COLOR_BGR2GRAY)
+    gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY) if len(img1.shape) == 3 else img1
+    gray2 = cv2.cvtColor(img2_resized, cv2.COLOR_BGR2GRAY) if len(img2_resized.shape) == 3 else img2_resized
     
     score, _ = structural_similarity(gray1, gray2, full=True)
     return score
@@ -124,21 +124,24 @@ def verify_visual_feature(img, denom, feature_id):
     kp_search, des_search = GLOBAL_ORB.detectAndCompute(search_img, None)
     
     for i, template in enumerate(TEMPLATE_CACHE[denom][feature_id]):
-        # Apply CLAHE strictly to Veto Gates (F1, F7) and detail-oriented shapes (F4, F5) to fix shadow-induced False Negatives
-        # Crucially, we apply this BEFORE template matching so that the alignment and TM score are structurally robust.
+        # Preprocessing block to eliminate shadow-induced False Negatives
         if feature_id in [1, 4, 5, 7]:
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            search_proc = clahe.apply(cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY))
-            template_proc = clahe.apply(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY))
+            if feature_id == 7:
+                # Watermark (F7) requires stronger CLAHE + Gaussian blur for faint printing
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+                search_proc = cv2.GaussianBlur(clahe.apply(cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY)), (5, 5), 0)
+                template_proc = cv2.GaussianBlur(clahe.apply(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)), (5, 5), 0)
+            else:
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                search_proc = clahe.apply(cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY))
+                template_proc = clahe.apply(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY))
             
-            # Apply Gaussian Blur for F4 to suppress halftone printing noise for both TM and SSIM
+            # Apply Gaussian Blur for F4 to suppress halftone printing noise
             if feature_id == 4:
                 search_proc = cv2.GaussianBlur(search_proc, (5, 5), 0)
                 template_proc = cv2.GaussianBlur(template_proc, (5, 5), 0)
                 
-            # We rely purely on CLAHE for F1 as sharpening/thresholding decreases structural similarity
-            
-            # Improve Micro-Printing (F1) for LKR_1000 using Median Blur to remove scan noise
+            # Improve Micro-Printing (F1) for LKR_1000 using Median Blur
             if feature_id == 1 and denom == 'LKR_1000':
                 search_proc = cv2.medianBlur(search_proc, 3)
                 template_proc = cv2.medianBlur(template_proc, 3)
@@ -154,13 +157,17 @@ def verify_visual_feature(img, denom, feature_id):
             ext_gray = search_proc[ty:ty+th, tx:tx+tw]
             tmp_gray = template_proc
                 
-            ext_bgr = cv2.cvtColor(ext_gray, cv2.COLOR_GRAY2BGR)
-            tmp_bgr = cv2.cvtColor(tmp_gray, cv2.COLOR_GRAY2BGR)
-            
-            # Apply Gaussian blur to suppress noise amplified by CLAHE
-            ext_blur = cv2.GaussianBlur(ext_bgr, (5, 5), 0)
-            tmp_blur = cv2.GaussianBlur(tmp_bgr, (5, 5), 0)
-            score = calculate_ssim(ext_blur, tmp_blur)
+            if feature_id == 7:
+                # Calculate SSIM directly on grayscale for F7 due to blur_clahe
+                score = calculate_ssim(ext_gray, tmp_gray)
+            else:
+                ext_bgr = cv2.cvtColor(ext_gray, cv2.COLOR_GRAY2BGR)
+                tmp_bgr = cv2.cvtColor(tmp_gray, cv2.COLOR_GRAY2BGR)
+                
+                # Apply Gaussian blur to suppress noise amplified by CLAHE
+                ext_blur = cv2.GaussianBlur(ext_bgr, (5, 5), 0)
+                tmp_blur = cv2.GaussianBlur(tmp_bgr, (5, 5), 0)
+                score = calculate_ssim(ext_blur, tmp_blur)
         else:
             # Standard fast BGR template matching
             res = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
@@ -210,68 +217,50 @@ def verify_visual_feature(img, denom, feature_id):
             except cv2.error:
                 pass
             
-    # Scale-Invariant Artistic Motifs (F2)
+    # Determine Thresholds by Denomination and Feature
+    thresh = {
+        'LKR_500': {
+            1: {'ssim': 0.70, 'tm': 0.70},
+            2: {'orb': 30, 'color': 0.70},
+            3: {'ssim': 0.75, 'tm': 0.75},
+            4: {'ssim': 0.70, 'tm': 0.70},
+            5: {'ssim': 0.75, 'tm': 0.75},
+            6: {'ssim': 0.80, 'tm': 0.70},
+            7: {'ssim': 0.50, 'tm': 0.50},
+        },
+        'LKR_1000': {
+            1: {'ssim': 0.50, 'tm': 0.70},
+            2: {'orb': 35, 'color': 0.75},
+            3: {'ssim': 0.60, 'tm': 0.45},
+            4: {'ssim': 0.60, 'tm': 0.75},
+            5: {'ssim': 0.70, 'tm': 0.45},
+            6: {'ssim': 0.75, 'tm': 0.65},
+            7: {'ssim': 0.33, 'tm': 0.53},
+        },
+        'LKR_5000': {
+            1: {'ssim': 0.70, 'tm': 0.45},
+            2: {'orb': 15, 'color': 0.75},
+            3: {'ssim': 0.75, 'tm': 0.55},
+            4: {'ssim': 0.60, 'tm': 0.70},
+            5: {'ssim': 0.70, 'tm': 0.50},
+            6: {'ssim': 0.80, 'tm': 0.70},
+            7: {'ssim': 0.59, 'tm': 0.40},
+        }
+    }
+    
+    t = thresh.get(denom, thresh['LKR_1000']).get(feature_id, {'ssim': 0.60, 'tm': 0.75})
+    
     if feature_id == 2:
-        passed = (max_orb_matches > 12) and (max_color_corr > 0.5)
-        # Fallback to pure SSIM if the note perfectly matches structure but ORB lost keypoints
-        if (max_ssim > 0.40 and best_corr > 0.75) and (max_color_corr > 0.5):
+        req_orb = t.get('orb', 12)
+        req_color = t.get('color', 0.5)
+        passed = (max_orb_matches > req_orb) and (max_color_corr > req_color)
+        if (max_ssim > 0.40 and best_corr > 0.75) and (max_color_corr > req_color):
             passed = True
         msg = f"ORB: {max_orb_matches} | Color: {max_color_corr:.2f}"
-    
-    # Detailed Structural Shapes (F4, F5)
-    elif feature_id in [4, 5]:
-        if feature_id == 5:
-            # Lowered so that good fakes pass, but blurry ones like 500_F5 (SSIM=0.30) fail.
-            threshold_ssim = 0.40
-            threshold_tm = 0.50
-            passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
-        else:
-            # Genuine notes had low raw SSIM due to subtle illumination, so we use CLAHE + tuned SSIM
-            threshold_ssim = 0.20
-            threshold_tm = 0.45
-            passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
-        msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
-    
-    # Rigid Spatial Numerals/Text (F3, F6)
-    elif feature_id == 3:
-        # We apply Gaussian Blur before SSIM to suppress halftone noise and reveal true macro structure
-        threshold_ssim = 0.60
-        threshold_tm = 0.50
-        
-        passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
-        msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
-
-    elif feature_id == 6:
-        # Increased threshold as requested for Value Text
-        threshold_ssim = 0.80
-        threshold_tm = 0.70
-        
-        passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
-        msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
-        
-    elif feature_id == 1: 
-        if denom == 'LKR_1000':
-            # Lowest genuine was SSIM: 0.493 | TM: 0.723
-            # Threshold set just below minimums to ensure all 1000_G notes pass
-            threshold_ssim = 0.45
-            threshold_tm = 0.70
-        else:
-            threshold_ssim = 0.28 # Lowered slightly to allow G8, TM is highly robust now
-            threshold_tm = 0.40
-            
-        passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
-        msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
-        
-    elif feature_id == 7: 
-        threshold_ssim = 0.20 # Watermarks are faint, CLAHE boosts them but requires lower threshold
-        threshold_tm = 0.14 # Decreased to allow faint genuine watermarks on fakes to pass
-        passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
-        msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
-        
     else:
-        threshold_ssim = 0.60
-        threshold_tm = 0.75
-        passed = (max_ssim > threshold_ssim) and (best_corr > threshold_tm)
+        req_ssim = t.get('ssim', 0.60)
+        req_tm = t.get('tm', 0.75)
+        passed = (max_ssim > req_ssim) and (best_corr > req_tm)
         msg = f"SSIM: {max_ssim:.3f} | TM: {best_corr:.3f}"
         
     return passed, msg, best_crop, max_ssim

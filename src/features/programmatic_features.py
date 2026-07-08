@@ -163,7 +163,8 @@ def verify_asymmetric_serial(img, denom):
             rects_dyn = []
             for c in contours_dyn:
                 x, y, w, h = cv2.boundingRect(c)
-                if w >= 3 and h >= 6 and (w * h) > 20:
+                # Reject dots (h < 13) and massive noise blocks (h > 55)
+                if w >= 3 and h >= 13 and (w * h) > 30 and h <= 55 and w <= 45:
                     aspect_ratio = float(w) / h
                     if 0.1 < aspect_ratio < 4.0:
                         rects_dyn.append((x, y, w, h))
@@ -172,7 +173,7 @@ def verify_asymmetric_serial(img, denom):
             for r in rects_dyn:
                 x, y, w, h = r
                 if w / h > 1.8:
-                    if h < 8: pass
+                    if h < 13: pass
                     else:
                         half_w = w // 2
                         split_rects_dyn.append((x, y, half_w, h))
@@ -180,19 +181,30 @@ def verify_asymmetric_serial(img, denom):
                 else:
                     split_rects_dyn.append(r)
                     
-            if denom == 'LKR_5000' and len(split_rects_dyn) > 0:
+            if len(split_rects_dyn) > 0:
+                # Calculate median baseline from the largest components (the digits)
                 largest_temp = sorted(split_rects_dyn, key=lambda r: r[2] * r[3], reverse=True)[:5]
-                med_y = np.median([r[1] + r[3]/2 for r in largest_temp])
-                split_rects_dyn = [r for r in split_rects_dyn if abs((r[1] + r[3]/2) - med_y) < 22]
+                med_baseline = np.median([r[1] + r[3] for r in largest_temp])
+                
+                filtered_rects = []
+                for r in split_rects_dyn:
+                    baseline = r[1] + r[3]
+                    # Rule 1: The 9 ascending digits on the main baseline
+                    if abs(baseline - med_baseline) <= 12:
+                        filtered_rects.append(r)
+                    # Rule 2: The prefix letter (e.g. 'S') above the first digits
+                    # It is on the left (x < 100) and situated above the main baseline
+                    elif r[0] < 100 and baseline < med_baseline - 15 and r[2] >= 8 and r[3] >= 8:
+                        filtered_rects.append(r)
+                
+                split_rects_dyn = filtered_rects
                 
             final_rects_dyn = sorted(split_rects_dyn, key=lambda r: r[2] * r[3], reverse=True)[:10]
             final_rects_dyn = sorted(final_rects_dyn, key=lambda r: r[0])
             
             heights_dyn = [r[3] for r in final_rects_dyn]
-            if denom == 'LKR_5000':
-                increases_dyn = sum(1 for j in range(1, len(heights_dyn)) if heights_dyn[j] >= heights_dyn[j-1] - 6)
-            else:
-                increases_dyn = sum(1 for j in range(1, len(heights_dyn)) if heights_dyn[j] >= heights_dyn[j-1] - 4)
+            # Enforce ascending sequence but with a noise tolerance of -12 pixels
+            increases_dyn = sum(1 for j in range(1, len(heights_dyn)) if heights_dyn[j] >= heights_dyn[j-1] - 12)
             
             if increases_dyn > best_increases or (increases_dyn == best_increases and len(final_rects_dyn) > best_chars):
                 best_increases = increases_dyn
