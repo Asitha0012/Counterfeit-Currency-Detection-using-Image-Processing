@@ -92,7 +92,7 @@ def four_point_transform(image, pts):
     widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
     widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
     maxWidth = max(int(widthA), int(widthB))
-    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - bl[1]) ** 2))
     heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
     maxHeight = max(int(heightA), int(heightB))
     dst = np.array([
@@ -111,14 +111,14 @@ def segment_note(image):
     ratio = image.shape[0] / 500.0
     orig = image.copy()
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 500))
-    
+
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     edged = cv2.Canny(gray, 75, 200)
-    
+
     cnts, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
-    
+
     screenCnt = None
     for c in cnts:
         peri = cv2.arcLength(c, True)
@@ -130,10 +130,10 @@ def segment_note(image):
             if area > 0.2 * img_area:
                 screenCnt = approx
                 break
-                
+
     if screenCnt is None:
         return orig
-        
+
     return four_point_transform(orig, screenCnt.reshape(4, 2) * ratio)
 
 
@@ -141,121 +141,105 @@ def segment_note(image):
 def align_note(img, denom):
     """
     Automatically align a banknote image to standard orientation and dimensions.
-    
+
     Uses Normalized Cross Correlation (NCC) to robustly detect the cardinal rotation
     (0°, 90°, 180°, 270°). If the note is tilted at an angle (e.g. 45°), it computes
     and applies a perspective warp via ORB homography.
-    
+
     Parameters:
         img: Input BGR image (numpy array from cv2.imread)
-        denom: Denomination string ('500' or '2000')
-    
+        denom: Denomination string ('LKR_500', 'LKR_1000', 'LKR_5000')
+
     Returns:
         Aligned BGR image resized to standard dimensions
     """
     w, h = STANDARD_DIMS[denom]
-    
+
     # 0. Attempt Background Segmentation
-    # If the user took a picture of a note on a cluttered table, this will automatically
-    # find the note boundary and warp it into a flat rectangle.
     img = segment_note(img)
-    
+
     # Load the canonical reference
     ref_data = _get_reference(denom)
     if ref_data is None or ref_data['descs'] is None:
         # Reference not found — fall back to simple resize
         return cv2.resize(img, (w, h))
-    
+
     # Coarse Orientation Correction via Normalized Cross Correlation
     ih, iw = img.shape[:2]
-    
+
     # Pre-emptively correct portrait images to landscape (banknotes are always landscape)
     is_portrait = ih > iw * 1.2
     if is_portrait:
         img_landscape = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
     else:
         img_landscape = img
-        
+
     gray_landscape = cv2.cvtColor(img_landscape, cv2.COLOR_BGR2GRAY)
-    
+
     # Resize to small thumbnail for extremely fast and robust NCC matching
     small_landscape = cv2.resize(gray_landscape, (200, 100))
     score0 = cv2.matchTemplate(small_landscape, ref_data['small'], cv2.TM_CCOEFF_NORMED)[0][0]
-    
+
     small_landscape_180 = cv2.resize(cv2.rotate(gray_landscape, cv2.ROTATE_180), (200, 100))
     score180 = cv2.matchTemplate(small_landscape_180, ref_data['small'], cv2.TM_CCOEFF_NORMED)[0][0]
-    
+
     if score180 > score0:
         coarse_img = cv2.rotate(img_landscape, cv2.ROTATE_180)
     else:
         coarse_img = img_landscape.copy()
-        
+
     # Fine Orientation & Perspective Correction (Homography check)
-    # Detect ORB features on the coarsely aligned image, but maintaining its aspect ratio!
-    # If we squish a rotated note into (1167, 519), it severely distorts the features.
     max_dim_fine = 1500
     ch, cw = coarse_img.shape[:2]
     scale_fine = max_dim_fine / max(ch, cw)
-    
+
     if scale_fine < 1.0:
         coarse_scaled = cv2.resize(coarse_img, (int(cw * scale_fine), int(ch * scale_fine)))
     else:
         coarse_scaled = coarse_img.copy()
         scale_fine = 1.0
-        
+
     coarse_gray = cv2.cvtColor(coarse_scaled, cv2.COLOR_BGR2GRAY)
-    
+
     # Use 5000 features for extremely robust and accurate homography
     orb_fine = cv2.ORB_create(5000, 1.2, 8, 15)
     kpts_coarse, descs_coarse = orb_fine.detectAndCompute(coarse_gray, None)
-    
+
     if descs_coarse is None or len(kpts_coarse) < 15:
         return cv2.resize(coarse_img, (w, h))
-        
+
     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
     try:
-        raw_matches2 = bf.knnMatch(ref_data['descs'], descs_coarse, k=2)
+        raw_matches = bf.knnMatch(ref_data['descs'], descs_coarse, k=2)
     except cv2.error:
         return cv2.resize(coarse_img, (w, h))
-        
-    good_matches2 = []
-    for pair in raw_matches2:
+
+    good_matches = []
+    for pair in raw_matches:
         if len(pair) == 2:
             m, n = pair
             if m.distance < 0.75 * n.distance:
-                good_matches2.append(m)
-                
-    if len(good_matches2) < 15:
+                good_matches.append(m)
+
+    if len(good_matches) < 15:
         return cv2.resize(coarse_img, (w, h))
-        
-    # Calculate homography M_scaled from the aspect-ratio-preserved image to the reference
-    src_pts = np.float32([kpts_coarse[m.trainIdx].pt for m in good_matches2]).reshape(-1, 1, 2)
-    dst_pts = np.float32([ref_data['kpts'][m.queryIdx].pt for m in good_matches2]).reshape(-1, 1, 2)
-    
+
+    src_pts = np.float32([kpts_coarse[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([ref_data['kpts'][m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
     M_scaled, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
     if M_scaled is None:
         return cv2.resize(coarse_img, (w, h))
-        
-    # Decompose homography to extract rotation angle (theta)
+
     theta = np.arctan2(M_scaled[1, 0], M_scaled[0, 0]) * 180 / np.pi
-    
-    # If the tilt angle is significant (> 0.1 degrees), apply perspective warp.
-    # Even a 1-degree rotation causes a 20+ pixel shift at the edge of the note,
-    # completely breaking the coordinate-based feature extraction.
+
     if abs(theta) > 0.1:
-        # Scale the homography matrix to apply it to the original full-resolution coarse_img!
-        # M_orig = M_scaled * S
         S = np.array([
             [scale_fine, 0, 0],
             [0, scale_fine, 0],
             [0, 0, 1]
         ])
         M_orig = M_scaled.dot(S)
-        
-        # Warp the full-resolution coarse image directly to the standard (w, h) output dimensions
-        # using high-quality Lanczos4 interpolation to preserve maximum sharpness.
         return cv2.warpPerspective(coarse_img, M_orig, (w, h), flags=cv2.INTER_LANCZOS4)
     else:
-        # Note is already well-aligned; skip warping to avoid sub-pixel interpolation blur
         return cv2.resize(coarse_img, (w, h))
-

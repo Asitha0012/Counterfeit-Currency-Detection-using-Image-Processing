@@ -21,6 +21,7 @@ docs/
 
 # Generated Data
 data/augmented_testing/
+data/augmented_testing_jpg/
 data/synthetic_fakes/
 
 # Temporary testing scripts
