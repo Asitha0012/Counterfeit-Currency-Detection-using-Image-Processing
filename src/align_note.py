@@ -138,7 +138,7 @@ def segment_note(image):
 
 
 
-def align_note(img, denom):
+def align_note(img, denom, return_status=False):
     """
     Automatically align a banknote image to standard orientation and dimensions.
 
@@ -161,8 +161,7 @@ def align_note(img, denom):
     # Load the canonical reference
     ref_data = _get_reference(denom)
     if ref_data is None or ref_data['descs'] is None:
-        # Reference not found — fall back to simple resize
-        return cv2.resize(img, (w, h))
+        return (cv2.resize(img, (w, h)), False) if return_status else cv2.resize(img, (w, h))
 
     # Coarse Orientation Correction via Normalized Cross Correlation
     ih, iw = img.shape[:2]
@@ -206,13 +205,13 @@ def align_note(img, denom):
     kpts_coarse, descs_coarse = orb_fine.detectAndCompute(coarse_gray, None)
 
     if descs_coarse is None or len(kpts_coarse) < 15:
-        return cv2.resize(coarse_img, (w, h))
+        return (cv2.resize(coarse_img, (w, h)), False) if return_status else cv2.resize(coarse_img, (w, h))
 
     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
     try:
         raw_matches = bf.knnMatch(ref_data['descs'], descs_coarse, k=2)
     except cv2.error:
-        return cv2.resize(coarse_img, (w, h))
+        return (cv2.resize(coarse_img, (w, h)), False) if return_status else cv2.resize(coarse_img, (w, h))
 
     good_matches = []
     for pair in raw_matches:
@@ -222,24 +221,26 @@ def align_note(img, denom):
                 good_matches.append(m)
 
     if len(good_matches) < 15:
-        return cv2.resize(coarse_img, (w, h))
+        return (cv2.resize(coarse_img, (w, h)), False) if return_status else cv2.resize(coarse_img, (w, h))
 
     src_pts = np.float32([kpts_coarse[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([ref_data['kpts'][m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
     M_scaled, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
     if M_scaled is None:
-        return cv2.resize(coarse_img, (w, h))
+        return (cv2.resize(coarse_img, (w, h)), False) if return_status else cv2.resize(coarse_img, (w, h))
 
     theta = np.arctan2(M_scaled[1, 0], M_scaled[0, 0]) * 180 / np.pi
 
-    if abs(theta) > 0.1:
+    # Use a dynamic threshold to balance F1 microprint vs F7 watermark padding
+    warp_thresh = 0.1 if denom == 'LKR_500' else 1.5
+    if abs(theta) > warp_thresh:
         S = np.array([
             [scale_fine, 0, 0],
             [0, scale_fine, 0],
             [0, 0, 1]
         ])
         M_orig = M_scaled.dot(S)
-        return cv2.warpPerspective(coarse_img, M_orig, (w, h), flags=cv2.INTER_LANCZOS4)
+        return (cv2.warpPerspective(coarse_img, M_orig, (w, h), flags=cv2.INTER_LANCZOS4), True) if return_status else cv2.warpPerspective(coarse_img, M_orig, (w, h), flags=cv2.INTER_LANCZOS4)
     else:
-        return cv2.resize(coarse_img, (w, h))
+        return (cv2.resize(coarse_img, (w, h)), True) if return_status else cv2.resize(coarse_img, (w, h))
